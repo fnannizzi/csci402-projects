@@ -67,8 +67,8 @@ Semaphore::P()
     IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
     
     while (value == 0) { 			// semaphore not available
-	queue->Append((void *)currentThread);	// so go to sleep
-	currentThread->Sleep();
+		queue->Append((void *)currentThread);	// so go to sleep
+		currentThread->Sleep();
     } 
     value--; 					// semaphore available, 
 						// consume its value
@@ -100,13 +100,165 @@ Semaphore::V()
 // Dummy functions -- so we can compile our later assignments 
 // Note -- without a correct implementation of Condition::Wait(), 
 // the test case in the network assignment won't work!
-Lock::Lock(char* debugName) {}
-Lock::~Lock() {}
-void Lock::Acquire() {}
-void Lock::Release() {}
+Lock::Lock(char* debugName) 
+{
+    name = debugName;
+    free = true;
+    ownerThread = NULL;
+    queue = new List;
+}
 
-Condition::Condition(char* debugName) { }
-Condition::~Condition() { }
-void Condition::Wait(Lock* conditionLock) { ASSERT(FALSE); }
-void Condition::Signal(Lock* conditionLock) { }
-void Condition::Broadcast(Lock* conditionLock) { }
+Lock::~Lock() 
+{
+	delete queue;
+}
+
+bool Lock::isHeldByCurrentThread(){
+	if(ownerThread == currentThread) 
+		return true;	
+	else
+		return false;
+}
+
+void Lock::Acquire() 
+{
+	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
+	if(isHeldByCurrentThread()) // if I'm the lock owner
+	{    
+		printf("Thread %s already owns the lock %s it is attempting to acquire.\n", 	currentThread->getName(), getName());
+	    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+	    return;
+	}
+	
+	if(free) // if I'm not the owner and the lock is free
+	{
+		free = false;
+		ownerThread = currentThread;
+	}
+	else // if I'm not the owner and the lock is not free 		   
+   	{
+   		//printf("Thread %s is attempting to acquire lock %s, but the lock is not free and thread is not owner.\n", currentThread->getName(), getName());
+		queue->Append((void *)currentThread);	// append to list of waiting threads
+		currentThread->Sleep();			// go to sleep
+    }
+    
+    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+    //printf("Thread %s is exiting Acquire() for lock %s, but the lock is not free and thread is not owner.\n", currentThread->getName(), getName());
+}
+
+void Lock::Release() 
+{
+	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
+	if(!isHeldByCurrentThread()) // if I'm not the lock owner
+	{    
+	    printf("Thread %s does not own the lock it is attempting to release.\n", getName());
+	    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+	    return;
+	}
+	
+	if(!queue->IsEmpty()) // if I'm the owner and there are threads waiting for the lock
+	{
+		Thread *thread = (Thread *)queue->Remove();
+    	if (thread != NULL)	   // make thread ready, consuming the V immediately
+		{
+			ownerThread = thread;
+			scheduler->ReadyToRun(thread);
+		}
+	}
+	
+	else // if I'm the owner and there are no threads waiting for the lock		   
+   	{
+   		free = true; // make lock available
+   		ownerThread = NULL; // clear lock ownership
+    }
+    
+    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+}
+
+Condition::Condition(char* debugName) 
+{ 
+	name = debugName;
+	queue = new List;
+	waitingLock = NULL;
+}
+
+Condition::~Condition() 
+{
+	delete queue;
+}
+
+void Condition::Wait(Lock* conditionLock) 
+{ 
+	//ASSERT(FALSE); 
+	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
+	
+	if(conditionLock == NULL) // programmer has made a mistake if this occurs
+	{
+		fprintf(stderr, "ERROR: %s received a null pointer to conditionLock.\n", getName());
+		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+		return;
+	}
+	else if(waitingLock == NULL) // if first thread calling Wait on this condition variable
+	{
+		waitingLock = conditionLock; // associate the lock with this condition variable
+	}
+	else if(waitingLock != conditionLock) // if lock passed does not match the lock already associated
+	{
+		fprintf(stderr, "ERROR: %s received a lock that does not match the associated lock.\n", getName());
+		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+		return;
+	}
+	
+	waitingLock->Release(); // current thread has completed critical section
+	queue->Append((void *)currentThread);	// append to list of waiting threads
+	currentThread->Sleep(); // put current thread to sleep until signaled
+	waitingLock->Acquire(); // upon waking up, reenter the critical section
+	
+	(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+}
+
+void Condition::Signal(Lock* conditionLock) 
+{ 
+	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
+	
+	if(conditionLock == NULL) // conditionLock shouldn't be null
+	{
+		fprintf(stderr, "ERROR: %s received a null pointer to conditionLock.\n", getName());
+		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+		return;
+	}
+	
+	if(queue->IsEmpty()) // if no threads waiting in wait queue
+	{
+		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+		return;
+	}
+	else if(waitingLock != conditionLock) // if lock passed by signaler doesn't match lock from waiters
+	{
+		fprintf(stderr, "ERROR: %s received a lock that does not match the associated lock.\n", getName());
+		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+		return;	
+	}
+	
+	Thread *thread = (Thread *)queue->Remove(); // remove one thread from wait queue
+    if (thread != NULL)	
+	{
+		scheduler->ReadyToRun(thread); // add to ready queue
+		printf("Added thread %s to the ready queue\n", thread->getName());
+	}
+	
+	if(queue->IsEmpty()) // if no more waiting threads
+	{
+		waitingLock = NULL; // clear relationship with lock
+	}
+	
+	(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
+}
+
+void Condition::Broadcast(Lock* conditionLock) 
+{	
+	while(!queue->IsEmpty()) // for all threads waiting in queue
+	{
+		Signal(conditionLock); // signal next thread in wait queue
+	}
+}

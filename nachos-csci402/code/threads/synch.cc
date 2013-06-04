@@ -209,10 +209,10 @@ void Condition::Wait(Lock* conditionLock)
 		return;
 	}
 	
-	waitingLock->Release(); // current thread has completed critical section
+	conditionLock->Release(); // current thread has completed critical section
 	queue->Append((void *)currentThread);	// append to list of waiting threads
 	currentThread->Sleep(); // put current thread to sleep until signaled
-	waitingLock->Acquire(); // upon waking up, reenter the critical section
+	conditionLock->Acquire(); // upon waking up, reenter the critical section
 	
 	(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
 }

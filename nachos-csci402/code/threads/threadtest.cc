@@ -31,23 +31,46 @@
 // Define global variables here
 // --------------------------------------------------
 
-int limoDriverIndex = 0, carDriverIndex = 0, valetIndex = 0;
-int carIndex = 0, visitorIndex = 0, ticketTakerIndex = 0;
-int numLimoDrivers, numCarDrivers, numValets, numCars, numVisitors, numTicketTakers;
+#define MAX_NUM_TICKET_TAKERS 		5 
+#define MIN_NUM_TICKET_TAKERS 		1 
+#define MAX_NUM_VALETS 				5
+#define MIN_NUM_VALETS 				1
+#define MAX_NUM_CARS 				20
+#define MIN_NUM_CARS 				5
+#define MAX_NUM_VALETS_ON_BENCH		2
+#define	MIN_NUM_CARS_WAITING		4
+#define	ON_BENCH					-1
+#define	IN_BACK_ROOM				-2 
+#define NO_TICKET_AVAILABLE			-1
 
-int ticketLineLength[5]; // if no ticket taker, line length = -1
+int numLimoDrivers = 0, numCarDrivers = 0, numValets = 0;
+int numCars = 0, numVisitors = 0, numTicketTakers = 0;
+
+// Valet Manager Data
+Condition* valetManagerAlertCV; // used to keep the Valet Manager running until 
+Lock* valetManagerAlertLock; // there are no more cars to park
+
+// Valet Data
+int valetCarNumber[MAX_NUM_VALETS]; // when parking, is the number of car being parked. If valet is in the back room, valetCarNumber[] = -2
+Lock* valetCarNumberLock; // if valet is on bench but not parking a car, valetCarNumber[] = -1
+
+Condition* valetAlertCV[MAX_NUM_VALETS]; // used to keep the Valets running until 
+Lock* valetAlertLock[MAX_NUM_VALETS]; // there are no more cars to park
+
+// Ticket Taker Data
+int ticketLineLength[MAX_NUM_TICKET_TAKERS]; // if no ticket taker, line length = -1
 Lock* ticketLineLengthLock; // if someone is at ticket taker, line length = 1
 
-Condition* ticketTakerCV[5]; // used to have the Visitor wait while the ticket is processed
-Lock* ticketTakerLock[5]; // and to signal them when it is accepted
+Condition* ticketTakerCV[MAX_NUM_TICKET_TAKERS]; // used to have the Visitor wait while the ticket is processed
+Lock* ticketTakerLock[MAX_NUM_TICKET_TAKERS]; // and to signal them when it is accepted
 
-int ticketVisitorNumber[5]; // if no ticket is being offered to the Ticket Taker, ticketVisitorNumber[] = -1
-Lock* ticketVisitorNumberLock[5]; // if a ticket is being offered by a Visitor, ticketVisitorNumber[] = Visitor's index (>= 0)
+int ticketVisitorNumber[MAX_NUM_TICKET_TAKERS]; // if no ticket is being offered to the Ticket Taker, ticketVisitorNumber[] = -1
+Lock* ticketVisitorNumberLock[MAX_NUM_TICKET_TAKERS]; // if a ticket is being offered by a Visitor, ticketVisitorNumber[] = Visitor's index (>= 0)
 
-Lock* ticketLineLock[5]; // prevents Visitors from reaching the Ticket Taker out of order
+Lock* ticketLineLock[MAX_NUM_TICKET_TAKERS]; // prevents Visitors from reaching the Ticket Taker out of order
 
-Condition* ticketTakerAlertCV[5]; // used to signal the Ticket Taker when a Visitor is ready
-Lock* ticketTakerAlertLock[5]; // and to put the Ticket Taker to sleep when there is no one to serve
+Condition* ticketTakerAlertCV[MAX_NUM_TICKET_TAKERS]; // used to signal the Ticket Taker when a Visitor is ready
+Lock* ticketTakerAlertLock[MAX_NUM_TICKET_TAKERS]; // and to put the Ticket Taker to sleep when there is no one to serve
 
 
 // --------------------------------------------------
@@ -64,20 +87,12 @@ void PrintMenu(){
 // --------------------------------------------------
 void Visitor(int index) {
 	// Data
-	int lineIndex = 0;
+	int lineIndex = 0, visitDuration = 0;
 	
 	// Begin Ticket Taker interaction
-	
 	// Choose a Ticket Taker to line up for
 	ticketLineLengthLock->Acquire(); // acquire the lock around ticketLineLength[]
-	for(int i = 0; i < 5; i++){ // find at least one available Ticket Taker
-		if(ticketLineLength[i] >= 0){ // check to see if the Ticket Taker is available
-			lineIndex = i; // update the lineIndex
-			break;
-		}
-	}
-	
-	for(int i = (lineIndex + 1); i < 5; i++){ // find the Ticket Taker with the shortest line 
+	for(int i = (lineIndex + 1); i < numTicketTakers; i++){ // find the Ticket Taker with the shortest line 
 		if(ticketLineLength[i] >= 0){ // check to see if the Ticket Taker is available
 			if(ticketLineLength[lineIndex] > ticketLineLength[i]){ // if a shorter line length is found
 				lineIndex = i; // update the lineIndex
@@ -119,34 +134,83 @@ void Visitor(int index) {
 	
 	ticketLineLock[lineIndex]->Release(); // release the lock, allowing the next thread to interact with the Ticket Taker
 	
+	// Begin Museum visit
+	visitDuration = (rand() % 50) + 50;
+	for(int i = 0; i < visitDuration; i++){
+		currentThread->Yield();
+	}
+	
+	// Begin to get ready to leave the Museum
+	printf("%s has left the Museum \n", 
+			currentThread->getName());
 }
 
 // --------------------------------------------------
 // Limo Driver function
 // --------------------------------------------------
-void LimoDriver() {
-	printf("Created Limo Driver thread.");
+void LimoDriver(int index) {
+	
 }
 
 // --------------------------------------------------
 // Car Driver function
 // --------------------------------------------------
-void CarDriver() {
+void CarDriver(int index) {
 
 }
 
 // --------------------------------------------------
 // Valet function
 // --------------------------------------------------
-void Valet() {
-
+void Valet(int index) {
+	while(true){
+		
+	
+		valetAlertLock[index]->Acquire(); // acquire the lock in valetAlertCV[]
+		valetAlertCV[index]->Wait(valetAlertLock[index]); // wait for a driver to signal saying there are still cars to be parked
+		valetAlertLock[index]->Release(); // release the lock in valetAlertCV[]
+	}
 }
 
 // --------------------------------------------------
 // Valet Manager function
 // --------------------------------------------------
-void Manager() {
-
+void ValetManager(int index) {
+	while(true){
+		// Data
+		int valetsOnBench = 0, lastValet = 0;
+	
+		// check to see if 4 or more cars are waiting to be parked
+		for(int i = 0; i < 100; i++){
+			currentThread->Yield();
+		}
+		
+		// if 4 or more cars waiting
+			//printf("%s has told Parking Valet[%d] to come out of the back room", 
+			//		currentThread->getName(), lastValet);
+	
+		// check to see if more than 2 valets are sitting on bench	
+		valetCarNumberLock->Acquire(); // acquire the lock around valetCarNumber[]
+		for(int i = 0; i < numValets; i++){ 
+			if(valetCarNumber[i] == ON_BENCH){ // if valet is sitting on bench
+				valetsOnBench++; // increment number of benched valets
+				lastValet = i; // record position of last benched valet
+			}
+		}
+		if(valetsOnBench > MAX_NUM_VALETS_ON_BENCH){
+			// send one valet to back room
+			printf("%s has sent Parking Valet[%d] to the back room", 
+					currentThread->getName(), lastValet);
+		}
+		
+		for(int i = 0; i < 100; i++){
+			currentThread->Yield();
+		}
+		
+		valetManagerAlertLock->Acquire(); // acquire the lock in valetManagerAlertCV
+		valetManagerAlertCV->Wait(valetManagerAlertLock); // wait for a Valet to signal saying there are still cars to be parked
+		valetManagerAlertLock->Release(); // release the lock in valetManagerAlertCV
+	}
 }
 
 // --------------------------------------------------
@@ -165,7 +229,7 @@ void TicketTaker(int index) {
 	
 			printf("%s has accepted a ticket from Visitor[%d] \n", 
 					currentThread->getName(), ticketVisitorNumber[index]);
-			ticketVisitorNumber[index] = -1; // update to show that the ticket transaction is over
+			ticketVisitorNumber[index] = NO_TICKET_AVAILABLE; // update to show that the ticket transaction is over
 			
 			ticketLineLengthLock->Acquire(); // acquire the lock around ticketLineLength[]
 			ticketLineLength[index]--; // decrement the length of line, because the Visitor is leaving
@@ -185,40 +249,48 @@ void TicketTaker(int index) {
 // Main thread
 // --------------------------------------------------
 void MuseumParkingSimulation(){
-	int argc = 0;
-	char** argv;
 	
-	if(argc < 3){
-		PrintMenu();
-		printf("Entering system test mode.\n");
-		numLimoDrivers = 1;
-		numCarDrivers = 1;
-		numValets = 5;
-		numTicketTakers = 2;
-		numCars = 2;
-		numVisitors = 10;
+	PrintMenu();	
 		
-	}
-	else {
-		printf("Entering command line mode.");
-		numTicketTakers = atoi(argv[1]);
-		numValets = atoi(argv[2]);
-		numCars = atoi(argv[3]);
-	}
+	numValets = 5;
+	numTicketTakers = 2;
+	numCars = 2;
 	
 	Thread *t; // Used to fork threads    
     char * buffer; // Used to name threads
+    int limoOrCar = 0; // used to randomly generate Limo or Car Drivers
+    int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
         
+    // Initialize Valet Manager data
+    buffer = new char[256];
+	sprintf(buffer, "valetManagerAlertCV");
+    valetManagerAlertCV = new Condition(buffer);
+	
+	buffer = new char[256];
+	sprintf(buffer, "valetManagerAlertLock");
+	valetManagerAlertLock = new Lock(buffer);
+
+	// Initialize Valet data
+	buffer = new char[256];
+	sprintf(buffer, "valetCarNumberLock");
+	valetCarNumberLock = new Lock(buffer);
+	
+	for(int i = 0; i < numValets; i++){
+		valetCarNumber[i] = ON_BENCH; 
+	
+		buffer = new char[256];
+		sprintf(buffer, "valetAlertCV%d", i);
+		valetAlertCV[i] = new Condition(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetAlertLock%d", i);		
+		valetAlertLock[i] = new Lock(buffer);
+	}
+            
  	// Initialize Ticket Taker data
     ticketLineLengthLock = new Lock("ticketLineLengthLock");    
         
-    for(int i = 0; i < 5; i++){
-    	if(i < numTicketTakers){
-			ticketLineLength[i] = 0;
-		}
-		else {
-			ticketLineLength[i] = -1;	
-		}	
+    for(int i = 0; i < numTicketTakers; i++){
 		buffer = new char[256];
 		sprintf(buffer, "ticketTakerLock%d", i);
 		ticketTakerLock[i] = new Lock(buffer);
@@ -243,33 +315,65 @@ void MuseumParkingSimulation(){
 		sprintf(buffer, "ticketTakerAlertLock%d", i);
 		ticketTakerAlertLock[i] = new Lock(buffer);
 		
-		ticketVisitorNumber[i] = -1;
+		ticketVisitorNumber[i] = NO_TICKET_AVAILABLE;
 	}
-
-   	// Create Visitors
-	for(int i = 0; i < numVisitors; i++){
+	
+	// Create Drivers
+	for(int i = 0; i < numCars; i++){
+		limoOrCar = rand() % 2;
 		buffer = new char[256];
-		sprintf(buffer, "Visitor[%d]", i);
-		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)Visitor, visitorIndex);
-		visitorIndex++;
-	}
+		if(limoOrCar == 0){
+			sprintf(buffer, "Car Driver[%d]", i);
+			t = new Thread(buffer);
+			t->Fork((VoidFunctionPtr)CarDriver, i);
+			numCarDrivers++;
+		}
+		else {
+			sprintf(buffer, "Limo Driver[%d]", i);
+			t = new Thread(buffer);
+			t->Fork((VoidFunctionPtr)LimoDriver, i);
+			numLimoDrivers++;
+		}
+	
+   		// Create Visitors
+   		numPassengers = (rand() % 4) + 2;
+		for(int j = 0; j < numPassengers; j++){
+			buffer = new char[256];
+			sprintf(buffer, "Visitor[%d]", numVisitors);
+			t = new Thread(buffer);
+			t->Fork((VoidFunctionPtr)Visitor, numVisitors);
+			numVisitors++;
+		}
+	}	
 
 	// Create Ticket Takers
 	for(int i = 0; i < numTicketTakers; i++){
 		buffer = new char[256];
-		sprintf(buffer, "TicketTaker[%d]", i);
+		sprintf(buffer, "Ticket Taker[%d]", i);
 		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)TicketTaker, ticketTakerIndex);
-		ticketTakerIndex++;
+		t->Fork((VoidFunctionPtr)TicketTaker, i);
 	}
-	
-	// Create Limo Drivers
-	/*for(int i = 0; i < numLimoDrivers; i++){
-		t = new Thread("Limo Driver");
-    	t->Fork((VoidFunctionPtr)LimoDriver, carIndex);
-    	carIndex++;
-    }*/
+    
+    // Create Valets
+/*    for(int i = 0; i < numValets; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Parking Valet[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)Valet, i);
+	}
+    
+    // Create Valet Manager (only need 1)
+    buffer = new char[256];
+    sprintf(buffer, "Valet Manager");
+	t = new Thread(buffer);
+	t->Fork((VoidFunctionPtr)ValetManager, 0);
+*/	
+	printf("Number of Limousine Drivers = [%d]\n", numLimoDrivers);
+	printf("Number of Car Drivers = [%d]\n", numCarDrivers);
+	printf("Number of Parking Valets = [%d]\n", numValets);
+	printf("Number of Visitors = [%d]\n", numVisitors);
+	printf("Number of Ticket Takers = [%d]\n", numTicketTakers);
+	printf("Number of Cars = [%d]\n", numCars);
 }
 
 

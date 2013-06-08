@@ -151,7 +151,7 @@ void Lock::Release()
 	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
 	if(!isHeldByCurrentThread()) // if I'm not the lock owner
 	{    
-	    printf("Thread %s does not own the lock it is attempting to release.\n", getName());
+	    printf("Thread %s does not own the lock it is attempting to release.\n", currentThread->getName());
 	    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
 	    return;
 	}
@@ -230,6 +230,7 @@ void Condition::Signal(Lock* conditionLock)
 	
 	if(queue->IsEmpty()) // if no threads waiting in wait queue
 	{
+		printf("Thread %s signaled lock %s, which has no waiting threads.\n", currentThread->getName(), getName());
 		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
 		return;
 	}
@@ -244,7 +245,7 @@ void Condition::Signal(Lock* conditionLock)
     if (thread != NULL)	
 	{
 		scheduler->ReadyToRun(thread); // add to ready queue
-		printf("Added thread %s to the ready queue\n", thread->getName());
+		//printf("Added thread %s to the ready queue\n", thread->getName());
 	}
 	
 	if(queue->IsEmpty()) // if no more waiting threads

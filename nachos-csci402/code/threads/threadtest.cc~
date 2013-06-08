@@ -19,6 +19,261 @@
 //#include "system.h"
 #ifdef CHANGED
 #include "synch.h"
+#include <cstdlib>
+#endif
+
+#ifndef MUSEUM_PARKING
+// --------------------------------------------------
+// Natural History Museum Parking Simulation
+// --------------------------------------------------
+
+// --------------------------------------------------
+// Define global variables here
+// --------------------------------------------------
+
+int limoDriverIndex = 0, carDriverIndex = 0, valetIndex = 0;
+int carIndex = 0, visitorIndex = 0, ticketTakerIndex = 0;
+int numLimoDrivers, numCarDrivers, numValets, numCars, numVisitors, numTicketTakers;
+
+int ticketLineLength[5]; // if no ticket taker, line length = -1
+Lock* ticketLineLengthLock; // if someone is at ticket taker, line length = 1
+
+Condition* ticketTakerCV[5];
+Lock* ticketTakerLock[5];
+
+int ticketVisitorNumber[5]; // if no ticket is being offered to the Ticket Taker, ticketVisitorNumber[] = -1
+Lock* ticketVisitorNumberLock[5]; // if a ticket is being offered by a Visitor, ticketVisitorNumber[] = Visitor's index (>= 0)
+
+Lock* ticketLineLock[5]; // prevents Visitors from reaching the Ticket Taker out of order
+
+Condition* ticketTakerAlertCV[5];
+Lock* ticketTakerAlertLock[5];
+
+
+// --------------------------------------------------
+// Print menu function
+// --------------------------------------------------
+void PrintMenu(){
+	printf("---------------------------------\n");
+	printf("---------------------------------\n");
+	printf("Beginning museum parking simulation. \n");
+}
+
+// --------------------------------------------------
+// Visitor function
+// --------------------------------------------------
+void Visitor(int index) {
+	// Data
+	int lineIndex = 0;
+	
+	// Begin Ticket Taker interaction
+	
+	// Choose a Ticket Taker to line up for
+	ticketLineLengthLock->Acquire(); // acquire the lock around ticketLineLength[]
+	for(int i = 0; i < 5; i++){ // find at least one available Ticket Taker
+		if(ticketLineLength[i] >= 0){ // check to see if the Ticket Taker is available
+			lineIndex = i; // update the lineIndex
+			break;
+		}
+	}
+	
+	for(int i = (lineIndex + 1); i < 5; i++){ // find the Ticket Taker with the shortest line 
+		if(ticketLineLength[i] >= 0){ // check to see if the Ticket Taker is available
+			if(ticketLineLength[lineIndex] > ticketLineLength[i]){ // if a shorter line length is found
+				lineIndex = i; // update the lineIndex
+			}
+		}
+	}
+	ticketLineLength[lineIndex]++; // increment the length of line, because the Visitor is now standing in it
+	ticketLineLengthLock->Release(); // release the lock around ticketLineLength[]
+	
+	// Wait in line to give the Ticket Taker a ticket
+	printf("%s is waiting for Ticket Taker[%d] \n", 
+			currentThread->getName(), lineIndex);
+			
+	// When ticketLineLock[lineIndex] is acquired, the visitor is at the front of the line
+	ticketLineLock[lineIndex]->Acquire();
+	
+	// When ticketTakerLock[lineIndex] is acquired, the visitor is ready to interact with the Ticket Taker
+	ticketTakerLock[lineIndex]->Acquire(); // acquire the lock on the ticketTakerCV
+	
+	ticketTakerAlertLock[lineIndex]->Acquire();
+	ticketTakerAlertCV[lineIndex]->Signal(ticketTakerAlertLock[lineIndex]);
+	
+	ticketVisitorNumberLock[lineIndex]->Acquire(); // acquire the lock around ticketVisitorNumber[index]
+	ticketVisitorNumber[lineIndex] = index; // update ticketVisitorNumber[] with my unique index, which serves as my ticket
+	ticketVisitorNumberLock[lineIndex]->Release(); // release the lock around ticketVisitorNumber[index]
+
+	ticketTakerAlertLock[lineIndex]->Release();
+	
+	// Visitor has made their ticket available to the Ticket Taker
+	printf("%s has given their ticket to TicketTaker[%d] \n", 
+			currentThread->getName(), lineIndex);
+			
+	// Wait for the Ticket Taker to approve the ticket
+	ticketTakerCV[lineIndex]->Wait(ticketTakerLock[lineIndex]); // wait until the Ticket Taker is available
+	ticketTakerLock[lineIndex]->Release(); // the Visitor's ticket was accepted
+	
+	printf("%s has entered the Museum \n", 
+			currentThread->getName());
+	
+	ticketLineLock[lineIndex]->Release();
+	
+}
+
+// --------------------------------------------------
+// Limo Driver function
+// --------------------------------------------------
+void LimoDriver() {
+	printf("Created Limo Driver thread.");
+}
+
+// --------------------------------------------------
+// Car Driver function
+// --------------------------------------------------
+void CarDriver() {
+
+}
+
+// --------------------------------------------------
+// Valet function
+// --------------------------------------------------
+void Valet() {
+
+}
+
+// --------------------------------------------------
+// Valet Manager function
+// --------------------------------------------------
+void Manager() {
+
+}
+
+// --------------------------------------------------
+// Ticket Taker function
+// --------------------------------------------------
+void TicketTaker(int index) {
+	while(true){
+		// Ticket Taker must acquire the lock in ticketTakerCV[index] before checking the ticket
+		ticketTakerLock[index]->Acquire(); // acquire the lock in tickerTakerCV[index]
+		ticketVisitorNumberLock[index]->Acquire(); // acquire the lock around ticketVisitorNumber[index]
+	
+		if(ticketVisitorNumber[index] >= 0){ // the Visitor at the front of my line is offering a ticket
+			printf("%s has received a ticket from Visitor[%d] \n", 
+					currentThread->getName(), ticketVisitorNumber[index]);
+			ticketTakerCV[index]->Signal(ticketTakerLock[index]); // we are taking their ticket, so we should tell them not to wait 
+	
+			printf("%s has accepted a ticket from Visitor[%d] \n", 
+					currentThread->getName(), ticketVisitorNumber[index]);
+			ticketVisitorNumber[index] = -1; // update to show that the ticket transaction is over
+			
+			ticketLineLengthLock->Acquire(); // acquire the lock around ticketLineLength[]
+			ticketLineLength[index]--; // decrement the length of line, because the Visitor is leaving
+			ticketLineLengthLock->Release(); // release the lock around ticketLineLength[]
+		}
+		
+		ticketVisitorNumberLock[index]->Release(); // release the lock around ticketVisitorNumber[index]
+		ticketTakerLock[index]->Release(); // release the lock in tickerTakerCV[index]
+		
+		ticketTakerAlertLock[index]->Acquire();
+		ticketTakerAlertCV[index]->Wait(ticketTakerAlertLock[index]);
+		ticketTakerAlertLock[index]->Release();
+	}
+}	
+
+// --------------------------------------------------
+// Main thread
+// --------------------------------------------------
+void MuseumParkingSimulation(){
+	int argc = 0;
+	char** argv;
+	
+	if(argc < 3){
+		PrintMenu();
+		printf("Entering system test mode.\n");
+		numLimoDrivers = 1;
+		numCarDrivers = 1;
+		numValets = 5;
+		numTicketTakers = 2;
+		numCars = 2;
+		numVisitors = 10;
+		
+	}
+	else {
+		printf("Entering command line mode.");
+		numTicketTakers = atoi(argv[1]);
+		numValets = atoi(argv[2]);
+		numCars = atoi(argv[3]);
+	}
+	
+	Thread *t; // Used to fork threads    
+    char * buffer; // Used to name threads
+        
+ 	// Initialize Ticket Taker data
+    ticketLineLengthLock = new Lock("ticketLineLengthLock");    
+        
+    for(int i = 0; i < 5; i++){
+    	if(i < numTicketTakers){
+			ticketLineLength[i] = 0;
+		}
+		else {
+			ticketLineLength[i] = -1;	
+		}	
+		buffer = new char[256];
+		sprintf(buffer, "ticketTakerLock%d", i);
+		ticketTakerLock[i] = new Lock(buffer);
+
+		buffer = new char[256];
+		sprintf(buffer, "ticketTakerCV%d", i);
+		ticketTakerCV[i] = new Condition(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "ticketVisitorNumberLock%d", i);
+		ticketVisitorNumberLock[i] = new Lock(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "ticketLineLock%d", i);
+		ticketLineLock[i] = new Lock(buffer);		
+		
+		buffer = new char[256];
+		sprintf(buffer, "ticketTakerAlertCV%d", i);
+		ticketTakerAlertCV[i] = new Condition(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "ticketTakerAlertLock%d", i);
+		ticketTakerAlertLock[i] = new Lock(buffer);
+		
+		ticketVisitorNumber[i] = -1;
+	}
+
+   	// Create Visitors
+	for(int i = 0; i < numVisitors; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Visitor[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)Visitor, visitorIndex);
+		visitorIndex++;
+	}
+
+	// Create Ticket Takers
+	for(int i = 0; i < numTicketTakers; i++){
+		buffer = new char[256];
+		sprintf(buffer, "TicketTaker[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)TicketTaker, ticketTakerIndex);
+		ticketTakerIndex++;
+	}
+	
+	// Create Limo Drivers
+	/*for(int i = 0; i < numLimoDrivers; i++){
+		t = new Thread("Limo Driver");
+    	t->Fork((VoidFunctionPtr)LimoDriver, carIndex);
+    	carIndex++;
+    }*/
+}
+
+
+
 #endif
 
 #ifdef CHANGED
@@ -388,8 +643,7 @@ void TestSuite() {
 //----------------------------------------------------------------------
 
 void
-SimpleThread(int which)
-{
+SimpleThread(int which) {
     int num;
     
     for (num = 0; num < 5; num++) {
@@ -405,13 +659,13 @@ SimpleThread(int which)
 //----------------------------------------------------------------------
 
 void
-ThreadTest()
-{
-    DEBUG('t', "Entering SimpleTest");
+ThreadTest() {
+    //DEBUG('t', "Entering SimpleTest");
 
-    Thread *t = new Thread("forked thread");
+    //Thread *t = new Thread("forked thread");
 
-    t->Fork(SimpleThread, 1);
-    SimpleThread(0);
-    TestSuite();
+    //t->Fork(SimpleThread, 1);
+    //SimpleThread(0);
+    //TestSuite();
+    MuseumParkingSimulation();
 }

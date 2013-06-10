@@ -31,20 +31,40 @@
 // Define global variables here
 // --------------------------------------------------
 
+// General constants
 #define MAX_NUM_TICKET_TAKERS 		5 
 #define MIN_NUM_TICKET_TAKERS 		1 
 #define MAX_NUM_VALETS 				5
 #define MIN_NUM_VALETS 				1
 #define MAX_NUM_CARS 				20
 #define MIN_NUM_CARS 				5
+// Valet Mananger constants
 #define MAX_NUM_VALETS_ON_BENCH		2
-#define	MIN_NUM_CARS_WAITING		4
-#define	ON_BENCH					-1
-#define	IN_BACK_ROOM				-2 
-#define NO_TICKET_AVAILABLE			-1
+#define	MIN_NUM_VEHICLES_WAITING	4
+#define YIELD_DURATION				20
+// Valet constants (not using an enum because array is also used to hold car indexes)
+#define	WAITING_ON_BENCH			-1
+#define	GOING_TO_BACK_ROOM			-2 
+#define IN_BACK_ROOM				-3
+#define IS_PARKING_CAR				-4
+#define ON_BENCH_NOT_WAITING		-5
 
+#define MIN_PARKING_DURATION		5
+#define MAX_PARKING_DURATION		15
+
+// Ticket Taker constants
+#define NO_TICKET_AVAILABLE			-1
+// Visitor constants
+#define MIN_VISIT_DURATION			50
+
+// Enum for Driver states
+typedef enum { WAITING_TO_PARK, WAITING_FOR_LIMOS, PARKING_CAR, WAITING_TO_LEAVE } carStatus;
+
+// General data
 int numLimoDrivers = 0, numCarDrivers = 0, numValets = 0;
 int numCars = 0, numVisitors = 0, numTicketTakers = 0;
+
+int numCarsWaitingToPark = 0, numLimosWaitingToPark = 0;
 
 // Valet Manager Data
 Condition* valetManagerAlertCV; // used to keep the Valet Manager running until 
@@ -52,10 +72,26 @@ Lock* valetManagerAlertLock; // there are no more cars to park
 
 // Valet Data
 int valetCarNumber[MAX_NUM_VALETS]; // when parking, is the number of car being parked. If valet is in the back room, valetCarNumber[] = -2
-Lock* valetCarNumberLock; // if valet is on bench but not parking a car, valetCarNumber[] = -1
+Lock* valetCarNumberLock[MAX_NUM_VALETS]; // if valet is on bench but not parking a car, valetCarNumber[] = -1
+
+Condition* valetStatusCV[MAX_NUM_VALETS];
+Lock* valetStatusLock[MAX_NUM_VALETS];
+
+Lock* valetLimoLineLock; // used to queue the waiting limos
+Lock* valetCarLineLock; // used to queue the waiting cars
+
+Lock* valetLimoParkingLock[MAX_NUM_VALETS]; // used to communicate with the drivers 
+Condition* valetLimoParkingCV[MAX_NUM_VALETS]; // when actually parking their car
+
+Lock* valetCarParkingLock[MAX_NUM_VALETS]; // used to communicate with the drivers 
+Condition* valetCarParkingCV[MAX_NUM_VALETS]; // when actually parking their car
 
 Condition* valetAlertCV[MAX_NUM_VALETS]; // used to keep the Valets running until 
 Lock* valetAlertLock[MAX_NUM_VALETS]; // there are no more cars to park
+
+// Driver Data
+Lock* numCarsWaitingToParkLock; // lock on the global int numCarsWaitingToPark
+Lock* numLimosWaitingToParkLock; // lock on the global int numLimosWaitingToPark 
 
 // Ticket Taker Data
 int ticketLineLength[MAX_NUM_TICKET_TAKERS]; // if no ticket taker, line length = -1
@@ -88,6 +124,8 @@ void PrintMenu(){
 void Visitor(int index) {
 	// Data
 	int lineIndex = 0, visitDuration = 0;
+	int carIndex = index/1000; // decode the index to determine which car we belong to
+	int passengerIndex = index % 1000; // decode the index to determine which passenger position in the car we are
 	
 	// Begin Ticket Taker interaction
 	// Choose a Ticket Taker to line up for
@@ -135,10 +173,8 @@ void Visitor(int index) {
 	ticketLineLock[lineIndex]->Release(); // release the lock, allowing the next thread to interact with the Ticket Taker
 	
 	// Begin Museum visit
-	visitDuration = (rand() % 50) + 50;
-	for(int i = 0; i < visitDuration; i++){
-		currentThread->Yield();
-	}
+	visitDuration = (rand() % MIN_VISIT_DURATION) + MIN_VISIT_DURATION;
+	for(int i = 0; i < visitDuration; i++){ currentThread->Yield(); }
 	
 	// Begin to get ready to leave the Museum
 	printf("%s has left the Museum \n", 
@@ -149,26 +185,298 @@ void Visitor(int index) {
 // Limo Driver function
 // --------------------------------------------------
 void LimoDriver(int index) {
+	// Data
+	carStatus status = WAITING_TO_PARK;
+	int valetIndex = 0;
 	
+	while(true){
+		if(status == WAITING_TO_PARK){ // waiting in line for the valet			
+
+			// Wait in the line of limos to be parked
+			valetLimoLineLock->Acquire(); // when acquired you are at the front of the line
+			
+			// TODO: acquire a lock on the CV for the car
+			// broadcast on that lock to all passengers, telling them to leave
+			// release the lock
+			
+			status = PARKING_CAR;
+		}
+		else if(status == PARKING_CAR){ // interacting with valet to park car and exchange keys and token
+			for(int i = 0; i < numValets; i++){		
+				valetCarNumberLock[i]->Acquire(); // acquire the locks around valetCarNumber[]
+			}
+			for(int i = 0; i < numValets; i++){
+				if(valetCarNumber[i] == WAITING_ON_BENCH){ // if valet is sitting on the bench
+					valetIndex = i;
+					break;
+				}
+			}
+			if(valetCarNumber[valetIndex] != WAITING_ON_BENCH){ // no valets are available
+				for(int i = 0; i < numValets; i++){	
+					valetCarNumberLock[i]->Release(); // release the locks around valetCarNumber[]
+				}
+				for(int i = 0; i < YIELD_DURATION; i++){ currentThread->Yield(); } // yield so we don't check too often
+			}
+			else { // found an available valet
+				// TODO: Move to section where visitors actually leave car
+				printf("%s has told his visitors to leave Car[%d] \n", 
+						currentThread->getName(), index);
+				printf("%s has parked Car[%d] at the Museum \n", 
+						currentThread->getName(), index);
+				valetLimoParkingLock[valetIndex]->Acquire(); // acquire the lock on the valet, so we are ready to interact with him
+				valetAlertLock[valetIndex]->Acquire(); // acquire the lock that allows us to signal the valet
+				
+				valetCarNumber[valetIndex] = index; // make the valet unavailable, and let him know which car is being parked
+				
+				for(int i = 0; i < numValets; i++){	
+					valetCarNumberLock[i]->Release(); // release the locks around valetCarNumber[]
+				}
+				
+				valetAlertCV[valetIndex]->Signal(valetAlertLock[valetIndex]); // wake up valet if he is sleeping
+				printf("%s signalling valet \n", currentThread->getName());
+				valetAlertLock[valetIndex]->Release(); // release the alert lock now that we have made our presence known
+				printf("%s has given their keys to Parking Valet[%d] for Car[%d] \n", 
+						currentThread->getName(), valetIndex, index);
+									
+				valetLimoParkingCV[valetIndex]->Wait(valetLimoParkingLock[valetIndex]); // wait for the valet to park the car
+				printf("%s has received Parking Token[%d] from Parking Valet[%d] for Car[%d] \n", 
+						currentThread->getName(), index, valetIndex, index);
+	
+				valetLimoParkingLock[valetIndex]->Release(); // release the lock on the valet, now that the car is parked
+				valetLimoLineLock->Release(); // allow the next driver in line to interact with the valets
+
+				status = WAITING_TO_LEAVE; // visitors are inside the museum now
+			}
+		}	
+		else if(status == WAITING_TO_LEAVE){
+			break;
+		}
+		printf("%s looping \n", currentThread->getName());
+	}
 }
 
 // --------------------------------------------------
 // Car Driver function
 // --------------------------------------------------
 void CarDriver(int index) {
-
+	// Data
+	carStatus status = WAITING_TO_PARK;
+	int valetIndex = 0, numLimosWaiting = 0;
+	
+	while(true){
+		if(status == WAITING_TO_PARK){ // waiting in line for the valet			
+		
+			// Wait in the line of cars to be parked
+			valetCarLineLock->Acquire(); // when acquired you are at the front of the line
+			printf("%s at front of car line \n", currentThread->getName());
+			// TODO: acquire a lock on the CV for the car
+			// broadcast on that lock to all passengers, telling them to leave
+			// release the lock
+			
+			status = WAITING_FOR_LIMOS;
+		}
+		else if(status == WAITING_FOR_LIMOS){ // at the front of the car line, but there are limos to be parked
+			numLimosWaitingToParkLock->Acquire(); // acquire the lock around global int numLimosWaitingToPark
+			numLimosWaiting = numLimosWaitingToPark; // update our local copy of the variable
+			numLimosWaitingToParkLock->Release(); // release the lock around global int numLimosWaitingToPark
+			
+			// Check to see if any limos are waiting to park
+			if(numLimosWaiting == 0){ // no limos waiting
+				printf("%s no limos left \n", currentThread->getName());
+				status = PARKING_CAR;
+			}
+			else { // must wait for limos to be parked
+				//printf("%s yielding \n", currentThread->getName());
+				for(int i = 0; i < YIELD_DURATION; i++){ currentThread->Yield(); } // yield so we don't check too often
+			}
+		}
+		else if(status == PARKING_CAR){ // interacting with valet to park car and exchange keys and token
+			for(int i = 0; i < numValets; i++){		
+				valetCarNumberLock[i]->Acquire(); // acquire the locks around valetCarNumber[]
+			}
+			for(int i = 0; i < numValets; i++){
+				if(valetCarNumber[i] == WAITING_ON_BENCH){
+					valetIndex = i;
+					break;
+				}
+			}
+			if(valetCarNumber[valetIndex] != WAITING_ON_BENCH){ // no valets are available
+				for(int i = 0; i < numValets; i++){	
+					valetCarNumberLock[i]->Release(); // release the locks around valetCarNumber[]
+				}
+			}
+			else { // found an available valet
+				//TODO: Move to the section where visitors actually get out
+				printf("%s has told his visitors to leave Car[%d] \n", 
+						currentThread->getName(), index);
+				printf("%s has parked Car[%d] at the Museum \n", 
+						currentThread->getName(), index);
+				
+				valetCarParkingLock[valetIndex]->Acquire(); // acquire the lock on the valet, so we are ready to interact with him					
+				valetAlertLock[valetIndex]->Acquire(); // acquire the lock that allows us to signal the valet
+				valetCarNumber[valetIndex] = index; // make the valet unavailable, and give him the keys to the car being parked
+				for(int i = 0; i < numValets; i++){	
+					valetCarNumberLock[i]->Release(); // release the locks around valetCarNumber[]
+				}
+				
+				valetAlertCV[valetIndex]->Signal(valetAlertLock[valetIndex]); // alert the valet that there is a car waiting to be parked
+				printf("%s signalling valet \n", currentThread->getName());
+				valetAlertLock[valetIndex]->Release(); // release the alert lock now that we have made our presence known
+				printf("%s has given their keys to Parking Valet[%d] for Car[%d] \n", 
+						currentThread->getName(), valetIndex, index);
+										
+				valetCarParkingCV[valetIndex]->Wait(valetCarParkingLock[valetIndex]); // wait for the valet to park the car
+				printf("%s has received Parking Token[%d] from Parking Valet[%d] for Car[%d] \n", 
+						currentThread->getName(), index, valetIndex, index);
+						
+				valetCarParkingLock[valetIndex]->Release(); // release the lock on the valet, now that the car is parked
+				valetCarLineLock->Release(); // allow the next driver in line to interact with the valets
+				
+				status = WAITING_TO_LEAVE; // visitors are inside the museum now
+			}
+		}	
+		else if(status == WAITING_TO_LEAVE){
+			break;
+		}
+		//printf("%s looping \n", currentThread->getName());
+	}
 }
 
 // --------------------------------------------------
 // Valet function
 // --------------------------------------------------
 void Valet(int index) {
-	while(true){
-		
+	// Data
+	int valetStatus = ON_BENCH_NOT_WAITING; // just a reminder that all valets need to be waiting before drivers can signal them
+	int numCarsWaiting = 0, numLimosWaiting = 0;
+	int parkingDuration = 0;
+	bool sleepingOnBench = false;
 	
-		valetAlertLock[index]->Acquire(); // acquire the lock in valetAlertCV[]
-		valetAlertCV[index]->Wait(valetAlertLock[index]); // wait for a driver to signal saying there are still cars to be parked
-		valetAlertLock[index]->Release(); // release the lock in valetAlertCV[]
+	while(true){	
+		valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]
+		valetStatus = valetCarNumber[index]; // read the updated status
+		valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+
+		valetStatusLock[index]->Acquire(); // acquire the lock on valetStatusCV[]
+
+		if(valetStatus == GOING_TO_BACK_ROOM){ // if valet is sent to the back room
+			printf("%s is going to the back room \n",
+					currentThread->getName());
+					
+			valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]
+			valetCarNumber[index] = IN_BACK_ROOM; // update status
+			valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+		}
+		else if(valetStatus == IN_BACK_ROOM){ // if valet is in the back room
+			valetStatusCV[index]->Wait(valetStatusLock[index]); // wait on a signal to be brought back to the bench
+			printf("%s is coming out of the back room \n",
+					currentThread->getName());
+						
+			valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]
+			valetCarNumber[index] = ON_BENCH_NOT_WAITING; // update status
+			valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+		}
+		else if(valetStatus == ON_BENCH_NOT_WAITING){
+			// Confusing design - the valet needs to wait on a signal from a driver, so we change his 
+			// state to WAITING_ON_BENCH just before having him wait (essentially sleep on the bench)
+			// This is to prevent drivers from signalling a valet who isn't waiting
+			
+			// Wait to be signaled by a driver or the Valet Manager
+			valetAlertLock[index]->Acquire(); // acquire the lock in valetAlertCV[]
+			
+			// Determine number of limos waiting to be parked
+			numLimosWaitingToParkLock->Acquire(); // acquire the lock around global int numLimosWaitingToPark
+			numLimosWaiting = numLimosWaitingToPark; // update our copy of the variable
+			numLimosWaitingToParkLock->Release(); // release the lock around global int numLimosWaitingToPark
+			
+			// Determine number of cars waiting to be parked
+			numCarsWaitingToParkLock->Acquire(); // acquire the lock around global int numCarsWaitingToPark
+			numCarsWaiting = numCarsWaitingToPark; // update our copy of the variable
+			numCarsWaitingToParkLock->Release(); // release the lock around global int numCarsWaitingToPark
+			
+			if((numCarsWaiting + numLimosWaiting) == 0){ // if there are no vehicles waiting
+				if(!sleepingOnBench){
+					printf("%s is going to sleep on the bench \n",
+							currentThread->getName());
+					sleepingOnBench = true; 
+				}
+			}
+			
+			valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]
+			valetCarNumber[index] = WAITING_ON_BENCH; // update status
+			valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+			
+			printf("%s waiting \n", currentThread->getName());
+			valetAlertCV[index]->Wait(valetAlertLock[index]); // wait for a driver to signal saying there are still cars to be parked
+			printf("%s signaled  \n", currentThread->getName());
+			valetAlertLock[index]->Release(); // release the lock in valetAlertCV[]	
+		}
+		else if(valetStatus == WAITING_ON_BENCH){ 
+			// Essentially a dummy state - the valet is only here while he is waiting on a signal from
+			// a driver, who then changes his state to their index
+		}
+		else if(valetStatus == IS_PARKING_CAR){
+			// Alert the valet manager that there are cars being parked
+			valetManagerAlertLock->Acquire(); // acquire the lock in valetManagerAlertCV
+			valetManagerAlertCV->Signal(valetManagerAlertLock); // signal to wake up the valet manager
+			valetManagerAlertLock->Release(); // release the lock in valetManagerAlertCV
+			
+			valetStatusLock[index]->Release(); // release the lock on valetStatusCV[]
+			
+			// Parking the car should appear to take a random amount of time
+			parkingDuration = (rand() % MAX_PARKING_DURATION) + MIN_PARKING_DURATION;
+			for(int i = 0; i < parkingDuration; i++){ currentThread->Yield(); }
+			
+			valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]
+			valetCarNumber[index] = ON_BENCH_NOT_WAITING;
+			valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+			
+			valetStatusLock[index]->Acquire(); // acquire the lock on valetStatusCV[]
+		}
+		else { // valet is interacting with a driver
+			if(sleepingOnBench){
+				printf("%s has been woken up from the bench \n",
+						currentThread->getName());
+				sleepingOnBench = false;
+			}
+			if((valetStatus % 2) != 0){ // odd index means the vehicle is a limo
+				valetLimoParkingLock[index]->Acquire(); // acquire the lock used to signal the driver
+				printf("%s has received the keys from Limousine Driver[%d] for Car[%d] \n",
+						currentThread->getName(), valetStatus, valetStatus);
+						
+				valetLimoParkingCV[index]->Signal(valetLimoParkingLock[index]); // signal the driver to let them know we have received their keys
+				printf("%s has given Limousine Driver[%d] Parking Token[%d] for Car[%d] \n",
+						currentThread->getName(), valetStatus, valetStatus, valetStatus);		
+				valetLimoParkingLock[index]->Release(); // release the lock used to signal the driver
+				
+				numLimosWaitingToParkLock->Acquire(); // acquire the lock around global int numLimosWaitingToPark
+				numLimosWaitingToPark--; // update to remove the parked limo
+				numLimosWaitingToParkLock->Release(); // release the lock around global int numLimosWaitingToPark
+			}
+			else { // even index means the vehicle is a car
+				valetCarParkingLock[index]->Acquire(); // acquire the lock used to signal the driver
+				printf("%s has received the keys from Car Driver[%d] for Car[%d] \n",
+						currentThread->getName(), valetStatus, valetStatus);
+				
+				valetCarParkingCV[index]->Signal(valetCarParkingLock[index]); // signal the driver to let them know we have received their keys
+				printf("%s has given Car Driver[%d] Parking Token[%d] for Car[%d] \n",
+						currentThread->getName(), valetStatus, valetStatus, valetStatus);
+				valetCarParkingLock[index]->Release(); // release the lock used to signal the driver
+														
+				numCarsWaitingToParkLock->Acquire(); // acquire the lock around global int numCarsWaitingToPark
+				numCarsWaitingToPark--; // update to remove the parked car
+				numCarsWaitingToParkLock->Release(); // release the lock around global int numCarsWaitingToPark
+			}
+	
+			valetCarNumberLock[index]->Acquire(); // acquire the lock around valetCarNumber[]	
+			valetCarNumber[index] = IS_PARKING_CAR;
+			valetCarNumberLock[index]->Release(); // release the lock around valetCarNumber[]
+			printf("%s is parking Car[%d] \n",
+					currentThread->getName(), valetStatus);
+		}	
+		valetStatusLock[index]->Release(); // release the lock on valetStatusCV[]
+		
+		printf("%s looping \n", currentThread->getName());
 	}
 }
 
@@ -176,40 +484,81 @@ void Valet(int index) {
 // Valet Manager function
 // --------------------------------------------------
 void ValetManager(int index) {
+	// Data
+	int valetsOnBench = 0, benchValet = 0, backRoomValet = 0;
+	int numTotalVehiclesWaiting = 0;
+	
 	while(true){
-		// Data
-		int valetsOnBench = 0, lastValet = 0;
-	
-		// check to see if 4 or more cars are waiting to be parked
-		for(int i = 0; i < 100; i++){
-			currentThread->Yield();
-		}
+		// Check to see if 4 or more cars are waiting to be parked
+		numCarsWaitingToParkLock->Acquire(); // acquire lock around global int numCarsWaitingToPark 
+		numLimosWaitingToParkLock->Acquire(); // acquire lock around global int numLimosWaitingToPark
 		
-		// if 4 or more cars waiting
-			//printf("%s has told Parking Valet[%d] to come out of the back room", 
-			//		currentThread->getName(), lastValet);
+		numTotalVehiclesWaiting = numCarsWaitingToPark + // read globals to determine number of vehicles waiting
+								  numLimosWaitingToPark;
+									  
+		if(numTotalVehiclesWaiting >= MIN_NUM_VEHICLES_WAITING){ // if 4 or more cars waiting
+			for(int i = 0; i < numValets; i++){	
+				valetCarNumberLock[i]->Acquire(); // acquire the lock around valetCarNumber[]
+			}
+			for(int i = 0; i < numValets; i++){ 
+				if(valetCarNumber[i] == IN_BACK_ROOM){ // if valet is in the back room
+					backRoomValet = i; // record position of first valet available in back room
+					break;
+				}
+			}
+			if(valetCarNumber[backRoomValet] == IN_BACK_ROOM){ // if at least one valet is in the back room
+				valetCarNumber[backRoomValet] = ON_BENCH_NOT_WAITING; // change state of valet
+				
+				valetStatusLock[index]->Acquire(); // acquire the lock on valetStatusCV[]
+				valetStatusCV[index]->Signal(valetStatusLock[index]);
+				printf("%s has told Parking Valet[%d] to come out of the back room \n", 
+						currentThread->getName(), backRoomValet);
+				valetStatusLock[index]->Release(); // release the lock on valetStatusCV[]
+			}
+			for(int i = 0; i < numValets; i++){		
+				valetCarNumberLock[i]->Release(); // release the lock around valetCarNumber[]
+			}
+		}	
+		
+		numCarsWaitingToParkLock->Release(); // release lock around global int numCarsWaitingToPark 
+		numLimosWaitingToParkLock->Release(); // release lock around global int numLimosWaitingToPark
+		
+		for(int i = 0; i < 50; i++){ currentThread->Yield(); } // yield so we don't check too often
 	
-		// check to see if more than 2 valets are sitting on bench	
-		valetCarNumberLock->Acquire(); // acquire the lock around valetCarNumber[]
+		// Check to see if more than 2 valets are sitting on bench	
+		for(int i = 0; i < numValets; i++){	
+			valetCarNumberLock[i]->Acquire(); // acquire the lock around valetCarNumber[]
+		}
 		for(int i = 0; i < numValets; i++){ 
-			if(valetCarNumber[i] == ON_BENCH){ // if valet is sitting on bench
+			if(valetCarNumber[i] == WAITING_ON_BENCH){ // if valet is sitting on bench
 				valetsOnBench++; // increment number of benched valets
-				lastValet = i; // record position of last benched valet
+				benchValet = i; // record position of last benched valet
 			}
 		}
 		if(valetsOnBench > MAX_NUM_VALETS_ON_BENCH){
-			// send one valet to back room
-			printf("%s has sent Parking Valet[%d] to the back room", 
-					currentThread->getName(), lastValet);
+			if(valetCarNumber[benchValet] == WAITING_ON_BENCH){ // at least three valets are sitting on bench
+				valetCarNumber[benchValet] = GOING_TO_BACK_ROOM; // change state of valet
+				printf("%s has sent Parking Valet[%d] to the back room \n", 
+						currentThread->getName(), benchValet);
+				
+				// If the valet is sleeping on the bench, we need to wake him up		
+				valetAlertLock[benchValet]->Acquire(); // acquire the lock in valetAlertCV[]
+				valetAlertCV[benchValet]->Signal(valetAlertLock[benchValet]); // wait for a driver to signal saying there are still cars to be parked
+				valetAlertLock[benchValet]->Release(); // release the lock in valetAlertCV[]	
+			}
+		}		
+		for(int i = 0; i < numValets; i++){		
+			valetCarNumberLock[i]->Release(); // release the lock around valetCarNumber[]
 		}
 		
-		for(int i = 0; i < 100; i++){
-			currentThread->Yield();
-		}
+		for(int i = 0; i < YIELD_DURATION; i++){ currentThread->Yield(); } // yield so we don't check too often
 		
-		valetManagerAlertLock->Acquire(); // acquire the lock in valetManagerAlertCV
-		valetManagerAlertCV->Wait(valetManagerAlertLock); // wait for a Valet to signal saying there are still cars to be parked
-		valetManagerAlertLock->Release(); // release the lock in valetManagerAlertCV
+		//if(numTotalVehiclesWaiting < MIN_NUM_VEHICLES_WAITING){ // when we last checked, there weren't many cars left to park
+			valetManagerAlertLock->Acquire(); // acquire the lock in valetManagerAlertCV
+			valetManagerAlertCV->Wait(valetManagerAlertLock); // wait for a Valet to signal saying there are still cars to be parked
+			valetManagerAlertLock->Release(); // release the lock in valetManagerAlertCV
+		//}
+		printf("%s looping \n", currentThread->getName());
 	}
 }
 
@@ -254,13 +603,14 @@ void MuseumParkingSimulation(){
 		
 	numValets = 5;
 	numTicketTakers = 2;
-	numCars = 2;
+	numCars = 5;
 	
 	Thread *t; // Used to fork threads    
-    char * buffer; // Used to name threads
+    char *buffer; // Used to name threads
     int limoOrCar = 0; // used to randomly generate Limo or Car Drivers
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
-        
+    int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
+    
     // Initialize Valet Manager data
     buffer = new char[256];
 	sprintf(buffer, "valetManagerAlertCV");
@@ -270,13 +620,37 @@ void MuseumParkingSimulation(){
 	sprintf(buffer, "valetManagerAlertLock");
 	valetManagerAlertLock = new Lock(buffer);
 
-	// Initialize Valet data
+	// Initialize Valet data		
 	buffer = new char[256];
-	sprintf(buffer, "valetCarNumberLock");
-	valetCarNumberLock = new Lock(buffer);
+	sprintf(buffer, "numCarsWaitingToParkLock");
+	numCarsWaitingToParkLock = new Lock(buffer);
+	
+	buffer = new char[256];
+	sprintf(buffer, "numCarsWaitingToParkLock");
+	numLimosWaitingToParkLock = new Lock(buffer); 
+	
+	buffer = new char[256];
+	sprintf(buffer, "valetLimoLineLock");
+	valetLimoLineLock = new Lock(buffer);
+
+	buffer = new char[256];
+	sprintf(buffer, "valetCarLineLock");
+	valetCarLineLock = new Lock(buffer);
 	
 	for(int i = 0; i < numValets; i++){
-		valetCarNumber[i] = ON_BENCH; 
+		valetCarNumber[i] = ON_BENCH_NOT_WAITING;  
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetCarNumberLock%d", i);
+		valetCarNumberLock[i] = new Lock(buffer);
+	
+		buffer = new char[256];
+		sprintf(buffer, "valetStatusCV%d", i);
+		valetStatusCV[i] = new Condition(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetStatusLock%d", i);
+		valetStatusLock[i] = new Lock(buffer);
 	
 		buffer = new char[256];
 		sprintf(buffer, "valetAlertCV%d", i);
@@ -285,7 +659,32 @@ void MuseumParkingSimulation(){
 		buffer = new char[256];
 		sprintf(buffer, "valetAlertLock%d", i);		
 		valetAlertLock[i] = new Lock(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetLimoParkingLock%d", i);	
+		valetLimoParkingLock[i] = new Lock(buffer);  
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetLimoParkingCV%d", i);
+		valetLimoParkingCV[i] = new Condition (buffer);
+
+		buffer = new char[256];
+		sprintf(buffer, "valetCarParkingLock%d", i);
+		valetCarParkingLock[i] = new Lock(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "valetCarParkingCV%d", i);
+		valetCarParkingCV[i] = new Condition(buffer);
 	}
+	
+	// Initialize Driver data
+	buffer = new char[256];
+	sprintf(buffer, "numCarsWaitingToParkLock%d", 0);
+	numCarsWaitingToParkLock = new Lock(buffer);
+	
+	buffer = new char[256];
+	sprintf(buffer, "numLimosWaitingToParkLock%d", 0);
+	numLimosWaitingToParkLock = new Lock(buffer);
             
  	// Initialize Ticket Taker data
     ticketLineLengthLock = new Lock("ticketLineLengthLock");    
@@ -323,51 +722,56 @@ void MuseumParkingSimulation(){
 		limoOrCar = rand() % 2;
 		buffer = new char[256];
 		if(limoOrCar == 0){
-			sprintf(buffer, "Car Driver[%d]", i);
+			driverIndex = 2*i; // even index
+			sprintf(buffer, "Car Driver[%d]", driverIndex);
 			t = new Thread(buffer);
-			t->Fork((VoidFunctionPtr)CarDriver, i);
+			t->Fork((VoidFunctionPtr)CarDriver, driverIndex);
 			numCarDrivers++;
+			numCarsWaitingToPark++;
 		}
 		else {
-			sprintf(buffer, "Limo Driver[%d]", i);
+			driverIndex = (2*i) + 1; // odd index
+			sprintf(buffer, "Limo Driver[%d]", driverIndex);
 			t = new Thread(buffer);
-			t->Fork((VoidFunctionPtr)LimoDriver, i);
+			t->Fork((VoidFunctionPtr)LimoDriver, driverIndex);
 			numLimoDrivers++;
+			numLimosWaitingToPark++;
 		}
 	
-   		// Create Visitors
+/*   		// Create Visitors
    		numPassengers = (rand() % 4) + 2;
 		for(int j = 0; j < numPassengers; j++){
 			buffer = new char[256];
-			sprintf(buffer, "Visitor[%d]", numVisitors);
+			sprintf(buffer, "Visitor[%d]", ((i*1000) + j));
 			t = new Thread(buffer);
-			t->Fork((VoidFunctionPtr)Visitor, numVisitors);
+			t->Fork((VoidFunctionPtr)Visitor, ((i*1000) + j));
 			numVisitors++;
-		}
-	}	
-
-	// Create Ticket Takers
-	for(int i = 0; i < numTicketTakers; i++){
-		buffer = new char[256];
-		sprintf(buffer, "Ticket Taker[%d]", i);
-		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)TicketTaker, i);
+		}*/
+		
 	}
-    
-    // Create Valets
-/*    for(int i = 0; i < numValets; i++){
+		
+	// Create Valets
+    for(int i = 0; i < numValets; i++){
 		buffer = new char[256];
 		sprintf(buffer, "Parking Valet[%d]", i);
 		t = new Thread(buffer);
 		t->Fork((VoidFunctionPtr)Valet, i);
 	}
-    
-    // Create Valet Manager (only need 1)
-    buffer = new char[256];
-    sprintf(buffer, "Valet Manager");
+	
+	/*	// Create Ticket Takers
+	for(int i = 0; i < numTicketTakers; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Ticket Taker[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)TicketTaker, i);
+	}*/
+		
+	// Create Valet Manager (only need 1)
+   	buffer = new char[256];
+   	sprintf(buffer, "Valet Manager");
 	t = new Thread(buffer);
-	t->Fork((VoidFunctionPtr)ValetManager, 0);
-*/	
+	t->Fork((VoidFunctionPtr)ValetManager, 0);	
+
 	printf("Number of Limousine Drivers = [%d]\n", numLimoDrivers);
 	printf("Number of Car Drivers = [%d]\n", numCarDrivers);
 	printf("Number of Parking Valets = [%d]\n", numValets);
@@ -375,9 +779,6 @@ void MuseumParkingSimulation(){
 	printf("Number of Ticket Takers = [%d]\n", numTicketTakers);
 	printf("Number of Cars = [%d]\n", numCars);
 }
-
-
-
 #endif
 
 #ifdef CHANGED

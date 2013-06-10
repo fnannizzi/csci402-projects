@@ -1,0 +1,55 @@
+---------------------------------
+---------------------------------
+Beginning museum parking simulation. 
+Number of Limousine Drivers = [3]
+Number of Car Drivers = [2]
+Number of Parking Valets = [5]
+Number of Visitors = [0]
+Number of Ticket Takers = [2]
+Number of Cars = [5]
+Limo Driver[1] has told his visitors to leave Car[1] 
+Limo Driver[1] has parked Car[1] at the Museum 
+Limo Driver[1] has given their keys to Parking Valet[3] for Car[1] 
+Parking Valet[3] has received the keys from Limousine Driver[1] for Car[1] 
+Parking Valet[3] has given Limousine Driver[1] Parking Token[1] for Car[1] 
+Limo Driver[1] has received Parking Token[1] from Parking Valet[3] for Car[1] 
+Parking Valet[3] is parking Car[1] 
+Limo Driver[5] has told his visitors to leave Car[5] 
+Limo Driver[5] has parked Car[5] at the Museum 
+Limo Driver[5] has given their keys to Parking Valet[0] for Car[5] 
+Parking Valet[0] has received the keys from Limousine Driver[5] for Car[5] 
+Parking Valet[0] has given Limousine Driver[5] Parking Token[5] for Car[5] 
+Limo Driver[5] has received Parking Token[5] from Parking Valet[0] for Car[5] 
+Parking Valet[0] is parking Car[5] 
+Limo Driver[9] has told his visitors to leave Car[9] 
+Limo Driver[9] has parked Car[9] at the Museum 
+Limo Driver[9] has given their keys to Parking Valet[1] for Car[9] 
+Parking Valet[1] has received the keys from Limousine Driver[9] for Car[9] 
+Parking Valet[1] has given Limousine Driver[9] Parking Token[9] for Car[9] 
+Limo Driver[9] has received Parking Token[9] from Parking Valet[1] for Car[9] 
+Parking Valet[1] is parking Car[9] 
+Car Driver[6] has told his visitors to leave Car[6] 
+Car Driver[6] has parked Car[6] at the Museum 
+Car Driver[6] has given their keys to Parking Valet[0] for Car[6] 
+Parking Valet[0] has received the keys from Car Driver[6] for Car[6] 
+Parking Valet[0] has given Car Driver[6] Parking Token[6] for Car[6] 
+Car Driver[6] has received Parking Token[6] from Parking Valet[0] for Car[6] 
+Parking Valet[0] is parking Car[6] 
+Car Driver[2] has told his visitors to leave Car[2] 
+Car Driver[2] has parked Car[2] at the Museum 
+Car Driver[2] has given their keys to Parking Valet[1] for Car[2] 
+Parking Valet[1] has received the keys from Car Driver[2] for Car[2] 
+Parking Valet[1] has given Car Driver[2] Parking Token[2] for Car[2] 
+Car Driver[2] has received Parking Token[2] from Parking Valet[1] for Car[2] 
+Parking Valet[1] is parking Car[2] 
+No threads ready or runnable, and no pending interrupts.
+Assuming the program completed.
+Machine halting!
+
+Ticks: total 4864, idle 94, system 4770, user 0
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 0, sent 0
+
+Cleaning up...

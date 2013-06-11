@@ -60,6 +60,10 @@ extern void ThreadTest(), Copy(char *unixFile, char *nachosFile);
 extern void Print(char *file), PerformanceTest(void);
 extern void StartProcess(char *file), ConsoleTest(char *in, char *out);
 extern void MailTest(int networkID);
+#ifdef THREADS
+	extern void Problem2(char*), TestSuite(void);
+#endif
+
 
 //----------------------------------------------------------------------
 // main
@@ -84,9 +88,7 @@ main(int argc, char **argv)
     DEBUG('t', "Entering main");
     (void) Initialize(argc, argv);
     
-#ifdef THREADS
-    ThreadTest();
-#endif
+
 
     for (argc--, argv++; argc > 0; argc -= argCount, argv += argCount) {
 	argCount = 1;
@@ -110,6 +112,21 @@ main(int argc, char **argv)
 					// for console input
 	}
 #endif // USER_PROGRAM
+#ifdef THREADS
+		if (!strcmp(*argv, "-T")){               // Test Suite: link for this code is at the bottom of part 1 description
+            TestSuite();
+        }
+        if (!strcmp(*argv, "-P2")){              // Problem 2: for part 2
+	    	if(argc > 1){
+	    		Problem2(*(argv + 1));
+	    	}
+	    	else {
+	    		Problem2(0);
+	    	}
+            argCount = 2;
+		}
+        
+#endif
 #ifdef FILESYS
 	if (!strcmp(*argv, "-cp")) { 		// copy from UNIX to Nachos
 	    ASSERT(argc > 2);

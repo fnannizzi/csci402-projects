@@ -1,7 +1,7 @@
 #!/bin/bash
 
-for i in $(seq 0 9999);
+for i in $(seq 0 9);
 do
 	echo "$i"
-	nachos -rs $i
+	nachos -P2 3 -rs $i
 done

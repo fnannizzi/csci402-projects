@@ -24,12 +24,7 @@
 #define MAX_NUM_VALETS_ON_BENCH		2
 #define	MIN_NUM_VEHICLES_WAITING	4
 #define YIELD_DURATION				20
-// Valet constants (not using an enum because array is also used to hold car indexes, which are positive numbers)
-#define	WAITING_ON_BENCH			-1
-#define	GOING_TO_BACK_ROOM			-2 
-#define IN_BACK_ROOM				-3
-#define IS_PARKING_CAR				-4
-#define ON_BENCH_NOT_WAITING		-5
+// Valet constants 
 #define MIN_PARKING_DURATION		5
 #define MAX_PARKING_DURATION		15
 #define MIN_RETURNING_CAR_DURATION	5
@@ -44,6 +39,17 @@
 #define TOKEN_MULTIPLIER			1000
 #define CAR							0
 #define LIMO						1
+#define EMPTY						-1
+#define TIP							-5000
+
+//#define NOT_WAITING					0
+//#define WAITING_ON_VALET_TO_PARK	1
+
+// Enum for Valet states
+typedef enum { IN_BACK_ROOM,
+			   ON_BENCH,
+			   IS_PARKING_CAR
+			 } valetState;
 
 // Enum for Driver states
 typedef enum { WAITING_TO_PARK, 
@@ -61,7 +67,13 @@ typedef enum { WAITING_TO_PARK,
 			   QUIT
 			  } driverState;
 
-
+// Enum for Driver waiting states (used with valet)
+typedef enum { NOT_WAITING_ON_VALET,
+			   WAITING_ON_VALET_TO_PARK,
+			   EXCHANGE_KEYS,
+			   WAITING_ON_VALET_TO_RETURN_TOKEN
+			 } driverWaitingState;
+			 
 
 // General data
 int numLimoDrivers = 0, numCarDrivers = 0, numValets = 0;
@@ -78,36 +90,35 @@ Condition* valetManagerAlertCV; // used to keep the Valet Manager running until
 Lock* valetManagerAlertLock; // there are no more cars to park
 
 // Valet Data
-int valetCarNumber[MAX_NUM_VALETS]; // when parking, is the number of car being parked. If valet is in the back room, valetCarNumber[] = -2
-Lock* valetCarNumberLock[MAX_NUM_VALETS]; // if valet is on bench but not parking a car, valetCarNumber[] = -1
-
 Condition* valetStatusCV[MAX_NUM_VALETS]; // used to communicate between the Valet Manager and the Valets
 Lock* valetStatusLock[MAX_NUM_VALETS]; // so Valet Manager can signal Valets when needed
+int valetStatusRegister[MAX_NUM_VALETS]; // holds the status of each Valet so the Valet Manager can check on them
 
 Lock* valetLimoLineLock; // used to queue the waiting limos
 Lock* valetCarLineLock; // used to queue the waiting cars
+Lock* valetTokenReturnLineLock; // used to queue drivers waiting to return tokens
 
-Lock* valetLimoParkingLock[MAX_NUM_VALETS]; // used to communicate with the drivers 
-Condition* valetLimoParkingCV[MAX_NUM_VALETS]; // when actually parking their car
-
-Lock* valetCarParkingLock[MAX_NUM_VALETS]; // used to communicate with the drivers 
-Condition* valetCarParkingCV[MAX_NUM_VALETS]; // when actually parking their car
-
-Condition* valetAlertCV[MAX_NUM_VALETS]; // used to keep the Valets running until 
-Lock* valetAlertLock[MAX_NUM_VALETS]; // there are no more cars to park
-
-Condition* valetTokenReturnCV[MAX_NUM_VALETS]; // used to signal between driver and valet
-Lock* valetTokenReturnLock[MAX_NUM_VALETS]; // during token/key/tip exchange
-
-Lock* valetTokenReturnLineLock; // a lock to manage the line of drivers waiting to return their tokens
-
-Lock* valetTokenExchangeLock[MAX_NUM_VALETS]; // prevents the valet from parking the car until he hands off the token
+Lock* valetExchangeLock[MAX_NUM_VALETS]; // a lock to manage the exchange of keys/token/tip
+int valetExchange[MAX_NUM_VALETS]; // holds the keys/token/tip
+int tokenReturnStatus[MAX_NUM_CARS];
+Condition* waitOnTokenReturnCV[MAX_NUM_CARS]; // TODO
 
 // Driver Data
+Condition* carWaitOnValetCV[MAX_NUM_CARS]; // TODO
+//Lock* carWaitOnValetLock;
+Lock* waitOnValetLock;
+int carWaitOnValetStatus[MAX_NUM_CARS];
+
+Condition* limoWaitOnValetCV[MAX_NUM_CARS]; // TODO
+//Lock* limoWaitOnValetLock;
+int limoWaitOnValetStatus[MAX_NUM_CARS];
+
 int vehicleType[MAX_NUM_CARS]; // holds data on whether vehicle is a car or limo
 
+Condition* numLimosWaitingToParkCV;
 Lock* numCarsWaitingToParkLock; // lock on the global int numCarsWaitingToPark
 Lock* numLimosWaitingToParkLock; // lock on the global int numLimosWaitingToPark 
+Lock* signalValetsLock; // prevents clobbering the valet signals
 
 Condition* driverPassengerCV[MAX_NUM_CARS]; // manages communication between drivers and passengers
 Lock* driverPassengerLock[MAX_NUM_CARS]; // allowing driver to wait for everyone to leave/enter car
@@ -157,8 +168,12 @@ void InitializeData(int cars, int valets, int ticketTakers){
 	numCarsWaitingToParkLock = new Lock(buffer);
 	
 	buffer = new char[256];
-	sprintf(buffer, "numCarsWaitingToParkLock");
+	sprintf(buffer, "numLimosWaitingToParkLock");
 	numLimosWaitingToParkLock = new Lock(buffer); 
+	
+	buffer = new char[256];
+	sprintf(buffer, "numLimosWaitingToParkCV");
+	numLimosWaitingToParkCV = new Condition(buffer); 
 	
 	buffer = new char[256];
 	sprintf(buffer, "valetLimoLineLock");
@@ -173,55 +188,21 @@ void InitializeData(int cars, int valets, int ticketTakers){
 	valetTokenReturnLineLock = new Lock(buffer);
 	
 	for(int i = 0; i < numValets; i++){
-		valetCarNumber[i] = ON_BENCH_NOT_WAITING;  
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetCarNumberLock%d", i);
-		valetCarNumberLock[i] = new Lock(buffer);
-	
-		buffer = new char[256];
-		sprintf(buffer, "valetStatusCV%d", i);
-		valetStatusCV[i] = new Condition(buffer);
+		valetStatusRegister[i] = ON_BENCH; 
 		
 		buffer = new char[256];
 		sprintf(buffer, "valetStatusLock%d", i);
 		valetStatusLock[i] = new Lock(buffer);
 	
 		buffer = new char[256];
-		sprintf(buffer, "valetAlertCV%d", i);
-		valetAlertCV[i] = new Condition(buffer);
+		sprintf(buffer, "valetStatusCV%d", i);
+		valetStatusCV[i] = new Condition(buffer);
 		
 		buffer = new char[256];
-		sprintf(buffer, "valetAlertLock%d", i);		
-		valetAlertLock[i] = new Lock(buffer);
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetLimoParkingLock%d", i);	
-		valetLimoParkingLock[i] = new Lock(buffer);  
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetLimoParkingCV%d", i);
-		valetLimoParkingCV[i] = new Condition (buffer);
-
-		buffer = new char[256];
-		sprintf(buffer, "valetCarParkingLock%d", i);
-		valetCarParkingLock[i] = new Lock(buffer);
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetCarParkingCV%d", i);
-		valetCarParkingCV[i] = new Condition(buffer);
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetTokenExchangeLock%d", i);
-		valetTokenExchangeLock[i] = new Lock(buffer);
-
-		buffer = new char[256];
-		sprintf(buffer, "valetTokenReturnCV%d", i);		
-		valetTokenReturnCV[i] = new Condition(buffer);
-		
-		buffer = new char[256];
-		sprintf(buffer, "valetTokenReturnLock%d", i);
-		valetTokenReturnLock[i] = new Lock(buffer);
+		sprintf(buffer, "valetExchangeLock%d", i);
+		valetExchangeLock[i] = new Lock(buffer);
+	
+		valetExchange[i] = EMPTY;
 	}
 	
 	// Initialize Driver data
@@ -233,6 +214,20 @@ void InitializeData(int cars, int valets, int ticketTakers){
 	sprintf(buffer, "numLimosWaitingToParkLock%d", 0);
 	numLimosWaitingToParkLock = new Lock(buffer);
 	
+	buffer = new char[256];
+	sprintf(buffer, "limoWaitOnValetLock");	
+	//limoWaitOnValetLock = new Lock(buffer);  
+	
+	buffer = new char[256];
+	sprintf(buffer, "carWaitOnValetLock");
+	//carWaitOnValetLock = new Lock(buffer);
+	waitOnValetLock = new Lock(buffer);
+	
+	
+	buffer = new char[256];
+	sprintf(buffer, "signalValetsLock");
+	signalValetsLock = new Lock(buffer);
+	
 	for(int i = 0; i < numCars; i++){
 		buffer = new char[256];
 		sprintf(buffer, "driverPassengerCV%d", i);
@@ -241,6 +236,25 @@ void InitializeData(int cars, int valets, int ticketTakers){
 		buffer = new char[256];
 		sprintf(buffer, "driverPassengerLock%d", i);		 
 		driverPassengerLock[i] = new Lock(buffer);
+		
+		buffer = new char[256];
+		sprintf(buffer, "limoWaitOnValetCV%d", i);
+		limoWaitOnValetCV[i] = new Condition(buffer);
+		
+		limoWaitOnValetStatus[i] = NOT_WAITING_ON_VALET;
+		
+		buffer = new char[256];
+		sprintf(buffer, "carWaitOnValetCV%d", i);
+		carWaitOnValetCV[i] = new Condition(buffer);
+
+		carWaitOnValetStatus[i] = NOT_WAITING_ON_VALET;
+		
+		buffer = new char[256];
+		sprintf(buffer, "waitOnTokenReturnCV%d", i);
+		waitOnTokenReturnCV[i] = new Condition(buffer);
+		
+		tokenReturnStatus[i] = EMPTY;
+		
 	}
             
  	// Initialize Ticket Taker data

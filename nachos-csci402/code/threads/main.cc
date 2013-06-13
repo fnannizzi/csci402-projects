@@ -117,7 +117,7 @@ main(int argc, char **argv)
             TestSuite();
         }
         if (!strcmp(*argv, "-P2")){              // Problem 2: for part 2
-	    	if(argc > 1){
+	    	if((argc > 1) && (*(argv + 1) != NULL)){
 	    		Problem2(*(argv + 1));
 	    	}
 	    	else {

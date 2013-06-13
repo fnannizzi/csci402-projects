@@ -21,6 +21,16 @@ void test1(){
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
 
+	// Create Valets
+    for(int i = 0; i < numValets; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Parking Valet[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)Valet, i);
+	}
+	
+	for(int i = 0; i < 50; i++){ currentThread->Yield(); } // yield so we don't check too often
+
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
 		limoOrCar = rand() % 2;
@@ -35,14 +45,12 @@ void test1(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	
   		// Create Visitors
@@ -53,14 +61,6 @@ void test1(){
 			t->Fork((VoidFunctionPtr)Visitor, (((i + 1)*1000) + j));
 			numVisitors++;
 		}
-	}
-		
-	// Create Valets
-    for(int i = 0; i < numValets; i++){
-		buffer = new char[256];
-		sprintf(buffer, "Parking Valet[%d]", i);
-		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)Valet, i);
 	}
 	
 	// Create Ticket Takers
@@ -115,7 +115,6 @@ void test2(){
 		t = new Thread(buffer);
 		t->Fork((VoidFunctionPtr)LimoDriver, i);
 		numLimoDrivers++;
-		numLimosWaitingToPark++;
 	}
 	
 	// Create Car Drivers
@@ -130,7 +129,6 @@ void test2(){
 		t = new Thread(buffer);
 		t->Fork((VoidFunctionPtr)CarDriver, i);
 		numCarDrivers++;
-		numCarsWaitingToPark++;
 	}
 	PrintData();
 }
@@ -170,7 +168,6 @@ void test3(){
 		t = new Thread(buffer);
 		t->Fork((VoidFunctionPtr)LimoDriver, i);
 		numLimoDrivers++;
-		numLimosWaitingToPark++;
 	}
 	
 	// Create Car Drivers
@@ -185,14 +182,13 @@ void test3(){
 		t = new Thread(buffer);
 		t->Fork((VoidFunctionPtr)CarDriver, i);
 		numCarDrivers++;
-		numCarsWaitingToPark++;
 	}
 	PrintData();
 }
 
 // --------------------------------------------------
 // Test 4 - If no Valets are available, vehicles 
-// don't get parked TODO
+// don't get parked TODO (-rs 4, 6)
 // --------------------------------------------------
 void test4(){ 
 	InitializeData(5, 1, 0); // Initialize data with correct numbers of cars, valets, and ticket takers
@@ -209,7 +205,7 @@ void test4(){
 		buffer = new char[256];
 		sprintf(buffer, "Parking Valet[%d]", i);
 		t = new Thread(buffer);
-		valetCarNumber[i] = GOING_TO_BACK_ROOM; // make the valet unavailable
+		valetStatusRegister[i] = IN_BACK_ROOM; // make the valet unavailable
 		t->Fork((VoidFunctionPtr)Valet, i);
 	}
     
@@ -226,23 +222,33 @@ void test4(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	}
 	
+	printf("Signalling the valet\n");
+	// Signal a bunch of times to put the valet back in the waiting state, where he would normally start
 	for(int i = 0; i < numValets; i++){
 		valetStatusLock[i]->Acquire(); // acquire the lock on valetStatusCV[]
-		printf("signalling\n");
 		valetStatusCV[i]->Signal(valetStatusLock[i]); // have the valet come out of the back room
 		valetStatusLock[i]->Release(); // release the lock on valetStatusCV[]
 	}
+	for(int i = 0; i < numValets; i++){
+		valetStatusLock[i]->Acquire(); // acquire the lock on valetStatusCV[]
+		valetStatusCV[i]->Signal(valetStatusLock[i]); // have the valet come out of the back room
+		valetStatusLock[i]->Release(); // release the lock on valetStatusCV[]
+	}
+	for(int i = 0; i < numValets; i++){
+		valetStatusLock[i]->Acquire(); // acquire the lock on valetStatusCV[]
+		valetStatusCV[i]->Signal(valetStatusLock[i]); // have the valet come out of the back room
+		valetStatusLock[i]->Release(); // release the lock on valetStatusCV[]
+	}
+	
 }
 
 // --------------------------------------------------
@@ -250,7 +256,7 @@ void test4(){
 // properly
 // --------------------------------------------------
 void test5(){ 
-	InitializeData(20, 5, 0);	
+	InitializeData(20, 1, 0);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -259,6 +265,15 @@ void test5(){
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
     museumOpen = false; // close the museum to run a parking simulation
     onlyPark = true;
+
+	// Create Valets
+    for(int i = 0; i < numValets; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Parking Valet[%d]", i);
+		valetStatusRegister[i] = ON_BENCH;
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)Valet, i);
+	}
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
@@ -276,24 +291,13 @@ void test5(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
-	}
-		
-	// Create Valets
-    for(int i = 0; i < numValets; i++){
-		buffer = new char[256];
-		sprintf(buffer, "Parking Valet[%d]", i);
-		t = new Thread(buffer);
-		valetCarNumber[i] = IN_BACK_ROOM; // make the valet unavailable
-		t->Fork((VoidFunctionPtr)Valet, i);
 	}
 		
 	// Create Valet Manager (only need 1)
@@ -310,7 +314,7 @@ void test5(){
 // all Visitors have exited the car
 // --------------------------------------------------
 void test6(){ 
-	InitializeData(5, 5, 0);	
+	InitializeData(5, 1, 0);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -322,10 +326,10 @@ void test6(){
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
+		numPassengers = 2;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 		
@@ -334,14 +338,12 @@ void test6(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	
   		// Create Visitors
@@ -371,7 +373,7 @@ void test6(){
 // is acceptable
 // --------------------------------------------------
 void test7(){ 
-	InitializeData(0, 0, 5);	
+	InitializeData(5, 1, 5);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -379,13 +381,23 @@ void test7(){
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
     onlyTickets = true;
+    onlyPark = false;
+    museumOpen = true;
+
+	// Create Ticket Takers
+	for(int i = 0; i < numTicketTakers; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Ticket Taker[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)TicketTaker, i);
+	}
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
+		numPassengers = 1;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 	
@@ -399,13 +411,7 @@ void test7(){
 		}
 	}
 	
-	// Create Ticket Takers
-	for(int i = 0; i < numTicketTakers; i++){
-		buffer = new char[256];
-		sprintf(buffer, "Ticket Taker[%d]", i);
-		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)TicketTaker, i);
-	}	
+	
 	
 	PrintData();
 }
@@ -416,7 +422,7 @@ void test7(){
 // --------------------------------------------------
 void test8(){
 	
-	InitializeData(5, 5, 0);	
+	InitializeData(5, 1, 0);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -424,13 +430,21 @@ void test8(){
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
     museumOpen = false;
+    onlyPark = true;
+
+	// Create Valets
+    for(int i = 0; i < numValets; i++){
+		buffer = new char[256];
+		sprintf(buffer, "Parking Valet[%d]", i);
+		t = new Thread(buffer);
+		t->Fork((VoidFunctionPtr)Valet, i);
+	}
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 		
@@ -439,24 +453,16 @@ void test8(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	}
 		
-	// Create Valets
-    for(int i = 0; i < numValets; i++){
-		buffer = new char[256];
-		sprintf(buffer, "Parking Valet[%d]", i);
-		t = new Thread(buffer);
-		t->Fork((VoidFunctionPtr)Valet, i);
-	}
+
 	
 	PrintData();
 }
@@ -467,7 +473,7 @@ void test8(){
 // --------------------------------------------------
 void test9(){ 
 	
-	InitializeData(5, 5, 0);	
+	InitializeData(5, 1, 0);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -475,13 +481,15 @@ void test9(){
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
     museumOpen = false;
+    onlyPark = true;
+
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
+		numPassengers = 2;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 		
@@ -490,14 +498,12 @@ void test9(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	}
 		
@@ -518,7 +524,7 @@ void test9(){
 // --------------------------------------------------
 void test10(){ 
 	
-	InitializeData(5, 5, 0);	
+	InitializeData(5, 1, 0);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
@@ -529,10 +535,10 @@ void test10(){
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
+		numPassengers = 2;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 		
@@ -541,14 +547,12 @@ void test10(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	
   		// Create Visitors
@@ -578,20 +582,22 @@ void test10(){
 // have left the Museum
 // --------------------------------------------------
 void test11(){ 
-	InitializeData(5, 5, 5);	
+	InitializeData(5, 1, 5);	
 
 	Thread *t; // Used to fork threads    
     char *buffer; // Used to name threads
     int limoOrCar = 0; // used to randomly generate Limo or Car Drivers
     int numPassengers = 0; // used to randomly generate the number of passengers per car or limo
     int driverIndex = 0; // used to create unique indices for each driver, odd for limo, even for car
+	museumOpen = true;
+	onlyPark = false;
 
 	// Create Drivers
 	for(int i = 0; i < numCars; i++){
-		limoOrCar = rand() % 2;
+		limoOrCar = i % 2;
 		buffer = new char[256];
 		vehicleType[i] = limoOrCar;
-		numPassengers = (rand() % 4) + 2;
+		numPassengers = 2;
    		totalPassengers[i] = numPassengers;
    		passengerCount[i] = numPassengers;
 		
@@ -600,14 +606,12 @@ void test11(){
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)CarDriver, i);
 			numCarDrivers++;
-			numCarsWaitingToPark++;
 		}
 		else { // limoOrCar == LIMO
 			sprintf(buffer, "Limo Driver[%d]", i);
 			t = new Thread(buffer);
 			t->Fork((VoidFunctionPtr)LimoDriver, i);
 			numLimoDrivers++;
-			numLimosWaitingToPark++;
 		}
 	
   		// Create Visitors
@@ -640,7 +644,7 @@ void test11(){
 }
 
 // --------------------------------------------------
-// Main thread
+// Main thread // must be run with an argument to -P2
 // --------------------------------------------------
 void Problem2(char* choice){
 	
@@ -651,7 +655,7 @@ void Problem2(char* choice){
 	}
 	else {
 		testChoice = PrintMenu();
-	}
+	}	
 		
 	if(testChoice == 1){ test1(); } // Run a system test
 	else if(testChoice == 2){ test2(); } // As long as limousines keep arriving, regular cars never get parked

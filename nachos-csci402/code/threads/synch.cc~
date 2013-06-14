@@ -114,7 +114,6 @@ Lock::~Lock()
 }
 
 bool Lock::isHeldByCurrentThread(){
-	printf("%s in held by current thread \n", currentThread->getName());
 	if(ownerThread == currentThread) 
 		return true;	
 	else

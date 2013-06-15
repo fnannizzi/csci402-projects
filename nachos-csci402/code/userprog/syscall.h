@@ -29,6 +29,14 @@
 #define SC_Close	8
 #define SC_Fork		9
 #define SC_Yield	10
+/*Started editing here*/
+#define SC_Acquire	11
+#define SC_Release	12
+#define SC_Wait		13
+#define SC_Signal	14
+#define SC_Broadcast	15
+#define SC_CreateLock	16
+/*Stopped editing here*/
 
 #define MAXFILENAME 256
 
@@ -125,6 +133,18 @@ void Fork(void (*func)());
  * or not. 
  */
 void Yield();		
+
+/*Started editing here*/
+/*These prototypes may not be needed or not have proper type or parameters*/
+void Acquire(int lock);
+void Release(int lock);
+void Wait(int lock);
+void Signal(int lock);
+void Broadcast(int lock);
+int CreateLock(int size);
+
+
+/*Stopped editing here*/
 
 #endif /* IN_ASM */
 

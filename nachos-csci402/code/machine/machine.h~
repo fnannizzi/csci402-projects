@@ -21,11 +21,13 @@
 #ifndef MACHINE_H
 #define MACHINE_H
 
+#include <stdio.h>
+#include <iostream>
 #include "copyright.h"
 #include "utility.h"
 #include "translate.h"
 #include "disk.h"
-
+using namespace std;
 // Definitions related to the size, and format of user memory
 
 #define PageSize 	SectorSize 	// set the page size equal to
@@ -187,9 +189,9 @@ class Machine {
   private:
     bool singleStep;		// drop back into the debugger after each
 				// simulated instruction
-    int runUntilTime;		// drop back into the debugger when simulated
+    int64_t runUntilTime;		// drop back into the debugger when simulated
 				// time reaches this value
-    int lastUsed[NumPhysPages]; //This is the time stamp of when the page was last used.
+    int64_t lastUsed[NumPhysPages]; //This is the time stamp of when the page was last used.
 };
 
 extern void ExceptionHandler(ExceptionType which);

@@ -29,6 +29,8 @@
 
 using namespace std;
 
+
+
 int copyin(unsigned int vaddr, int len, char *buf) {
     // Copy len bytes from the current thread's virtual address vaddr.
     // Return the number of bytes so read, or -1 if an error occors.
@@ -231,6 +233,46 @@ void Close_Syscall(int fd) {
     }
 }
 
+/*Started editing here*/
+void Fork_Syscall(int i) { /*Not sure about the parameter, how do we make into a *func type*/
+	/*Need to implement this in Part 2*/
+}
+
+void Exec_Syscall(int i ) { /*Not sure about the parameter, need to convert to char* type*/
+	/*Need to implement this in Part 2*/
+}
+
+void Exit_Syscall(int i) {/*Not sure about the parameter*/
+    currentThread->Finish();
+}
+
+/*Lock code*/
+
+void Acquire_Syscall(int i) {
+
+}
+
+void Release_Syscall(int i) {
+
+}
+
+void Wait_Syscall(int i) {
+
+}
+
+void Signal_Syscall(int i) {
+
+}
+
+void Broadcast_Syscall(int i) {
+
+}
+
+int CreateLock_Syscall(int i) {
+	return i;
+}
+/*Finished editing here*/
+
 void ExceptionHandler(ExceptionType which) {
     int type = machine->ReadRegister(2); // Which syscall?
     int rv=0; 	// the return value from a syscall
@@ -267,6 +309,45 @@ void ExceptionHandler(ExceptionType which) {
 		DEBUG('a', "Close syscall.\n");
 		Close_Syscall(machine->ReadRegister(4));
 		break;
+	/*Started editing here*/
+	    case SC_Fork:
+	    	DEBUG('a', "Fork syscall.\n");
+	    	Fork_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Exec:
+	    	DEBUG('a', "Exec syscall.\n");
+	    	Exec_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Exit:
+	    	DEBUG('a', "Exit syscall.\n");
+	    	Exit_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Acquire:
+	    	DEBUG('a', "Acquire syscall.\n");
+	    	Acquire_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Release:
+	    	DEBUG('a', "Release syscall.\n");
+	    	Release_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Wait:
+	    	DEBUG('a', "Wait syscall.\n");
+	    	Wait_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Signal:
+	    	DEBUG('a', "Signal syscall.\n");
+	    	Signal_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Broadcast:
+	    	DEBUG('a', "Broadcast syscall.\n");
+	    	Broadcast_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_CreateLock:
+	    	DEBUG('a', "CreateLock syscall.\n");
+	    	CreateLock_Syscall(machine->ReadRegister(4));
+	    	break;
+	/*Finished editing here*/
+
 	}
 
 	// Put in the return value and increment the PC

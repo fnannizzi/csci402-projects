@@ -245,3 +245,26 @@ void AddrSpace::RestoreState()
     machine->pageTable = pageTable;
     machine->pageTableSize = numPages;
 }
+
+//----------------------------------------------------------------------
+// AddrSpace::MakeNewPT()
+// 
+//----------------------------------------------------------------------
+
+int AddrSpace::MakeNewPT()
+{
+    makeNewPTLock->Acquire(); // acquire lock 
+    TranslationEntry * pageTable2 = new TranslationEntry[numPages+8]; // create a new page table with 8 extra pages
+    for (unsigned int i = 0; i < numPages; i++)
+    {
+    	pageTable2[i] = pageTable[i]; // copy over the old page table
+    }
+    delete [] pageTable; // free up the memory from the old page table
+    pageTable = pageTable2; // point to the new page table
+    numPages+=8; // update numPages
+    machine->pageTable = pageTable; // point the machine to the new page table
+    machine->pageTableSize = numPages; // update the machine's pageTableSize variable
+    int loc = (numPages*PageSize) - 16; // record the new starting point in a local variable
+    makeNewPTLock->Release(); // release lock
+    return loc;   // return the new starting point
+}

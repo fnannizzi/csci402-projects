@@ -35,12 +35,21 @@ class AddrSpace {
     void SaveState();			// Save/restore address space-specific
     void RestoreState();		// info on a context switch
     Table fileTable;			// Table of openfiles
+    /* Started editing */
+    int MakeNewPT();
+    Lock * makeNewPTLock;
+    int getID() {return id;}
+    void setID(int i) {id = i;}
+    /* Stopped editing */
 
  private:
     TranslationEntry *pageTable;	// Assume linear page table translation
 					// for now!
     unsigned int numPages;		// Number of pages in the virtual 
 					// address space
+	/* Started editing */
+    int id;
+	/* Stopped editing */
 };
 
 #endif // ADDRSPACE_H

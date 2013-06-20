@@ -24,10 +24,75 @@
 #include "copyright.h"
 #include "system.h"
 #include "syscall.h"
+#include "synch.h"
 #include <stdio.h>
 #include <iostream>
 
 using namespace std;
+
+typedef struct {
+	bool isToBeDeleted, isDeleted;
+	Lock* lock;
+	AddrSpace* processOwner;
+} LockX;
+
+/* Constructor-style function */
+LockX* constructLockX(char* name) {
+	LockX* lX = new LockX;
+	Lock* l = new Lock(name);
+	lX->lock = l;
+	lX->processOwner = currentThread->space;
+	lX->isToBeDeleted = false;
+	lX->isDeleted = false;
+	return lX;
+}
+
+typedef struct {
+	bool isToBeDeleted, isDeleted;
+	AddrSpace *processOwner;
+	Condition* condition;
+} ConditionX;
+
+/* Constructor-style function */
+ConditionX* constructConditionX(char* name){
+	ConditionX* cX = new ConditionX;
+	Condition* c = new Condition(name);
+	cX->condition = c;
+	cX->processOwner = currentThread->space;
+	cX->isToBeDeleted = false;
+	cX->isDeleted = false;
+	return cX;
+}
+
+typedef struct {
+	int vaddr;
+	int stack;
+} KT;
+
+typedef struct {
+	int childProcesses;
+	AddrSpace* parent;
+	int spaceID;
+	//ChildProcess* childProcessTable;
+} Process;
+
+/* Constructor-style function */
+Process* constructProcess(int id) {
+	Process* p = new Process;
+	p->spaceID = id;
+	return p;
+}
+
+// Constants to hold the maximum number of locks and CVs
+#define MAX_LOCKS 		100
+#define MAX_CONDITIONS 	500
+#define MAX_PROCESSES 	5
+
+// Global tables to hold locks, CVs, and processes    
+LockX* lockTable[MAX_LOCKS];
+ConditionX* conditionTable[MAX_CONDITIONS];
+Process* processTable[MAX_PROCESSES];
+int lockTableIndex; // perhaps should not be global?
 
 int copyin(unsigned int vaddr, int len, char *buf) {
     // Copy len bytes from the current thread's virtual address vaddr.
@@ -231,6 +296,431 @@ void Close_Syscall(int fd) {
     }
 }
 
+/*Started editing here*/
+void Kernel_Thread(int ktint) {
+	KT* kt = (KT*)ktint;
+	machine->WriteRegister(PCReg,kt->vaddr);
+	machine->WriteRegister(NextPCReg,(kt->vaddr)+4);
+	currentThread->space->RestoreState();
+	//stack code
+	machine->WriteRegister(StackReg,kt->stack);
+	machine->Run();
+}
+
+void Fork_Syscall(int i) { /*Not sure about the parameter, how do we make into a *func type*/
+	/*Need to implement this in Part 2*/
+	int vaddr = machine->ReadRegister(4);
+	Thread* t = new Thread("thread"); // can we name our threads different things?
+	t->space = currentThread->space;
+	
+	//Update process table
+	/*int processID = currentThread->space->getID();
+	processTable[processID]->threadCount++;*/
+	
+	//stack code
+	int stack = t->space->MakeNewPT();
+	KT* kt = new KT;
+	kt->vaddr = vaddr; // TODO
+	kt->stack = stack; // TODO
+	t->Fork(Kernel_Thread,(int)kt);
+}
+
+void Yield_Syscall(int i){} // TODO
+
+void ExecThread(){} // TODO 
+
+void Exec_Syscall(int i ) { /*Not sure about the parameter, need to convert to char* type*/
+	/*Need to implement this in Part 2*/
+	int vaddr = machine->ReadRegister(4);
+	//Convert to physical address and read contents from here
+	//Use filesystem->Open
+	//Store openfile pointer
+	//Create new addressspace for executable
+	/*AddrSpace* addrspace = new AddrSpace(Openfile pointer);*/
+	Thread * t = new Thread("thread");
+	/*t->space = addrspace;*/
+	//Update process table
+	/*machine->WriteRegister(Register(2),space->getID());*/
+	//t->Fork(Exec_Thread,(int) kt);
+}
+
+void Exit_Syscall(int i) {/*Not sure about the parameter*/
+    currentThread->Finish();
+}
+
+/*Lock code*/
+
+int Acquire_Syscall(int index) {
+ if ((index >= MAX_LOCKS) || (index < 0)) {
+  	printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
+  	return -1;
+  	 
+  }
+  if (lockTable[index] == NULL) {
+  	printf("%s","Lock was never initialized\n");
+  	return -1;
+  }
+/*   if (!lockTable[index]->lock->isHeldByCurrentThread()) {
+  	printf("Thread %s does not own the lock it is attempting to release\n",currentThread->getName());
+  	return -1;
+  }*/
+  if (lockTable[index]->processOwner != currentThread->space) {
+  	printf("%s","Lock is not owned by current process\n");
+  	return -1;
+  }
+  if (lockTable[index]->isToBeDeleted) {
+  	printf("%s", "Lock has already been set to be deleted\n");
+  	return -1;
+  }
+  if (lockTable[index]->isDeleted) {
+  	printf("%s", "Lock has already been deleted\n");
+  	return -1;
+  }
+  
+  lockTable[index]->lock->Acquire();
+  return 0;
+}
+
+int Release_Syscall(int index) {
+	if ((index >= MAX_LOCKS) || (index < 0)) {
+  	printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
+  	return -1;
+  	 
+  }
+  if (lockTable[index] == NULL) {
+  	printf("%s","Lock was never initialized\n");
+  	return -1;
+  }
+  if (!lockTable[index]->lock->isHeldByCurrentThread())
+  {
+  	printf("Thread %s does not own the lock it is attempting to release\n",currentThread->getName());
+  	return -1;
+  }
+  if (lockTable[index]->processOwner != currentThread->space) {
+  	printf("%s","Lock is not owned by current process\n");
+  	return -1;
+  }
+  if (lockTable[index]->isToBeDeleted) {
+  	printf("%s", "Lock has already been set to be deleted\n");
+  	return -1;
+  }
+  if (lockTable[index]->isDeleted) {
+  	printf("%s", "Lock has already been deleted\n");
+  	return -1;
+  }
+
+
+  lockTable[index]->lock->Release();
+  return 0;
+}
+
+int Wait_Syscall(int iCV, int iLock) {
+	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){
+		fprintf(stderr, "Invalid conditionTable index %d, cannot allow %s to wait \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((iLock < 0) || (iLock >= MAX_LOCKS)){
+		fprintf(stderr, "Invalid lockTable index %d, cannot allow %s to wait \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV] == NULL){
+		fprintf(stderr, "No Condition initialized at index %d, cannot allow %s to wait \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock] == NULL){
+		fprintf(stderr, "No Lock initialized at index %d, cannot allow %s to wait \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if((conditionTable[iCV]->isToBeDeleted) || (conditionTable[iCV]->isDeleted)){
+		fprintf(stderr, "CV at index %d marked for deletion, cannot allow %s to wait \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((lockTable[iLock]->isToBeDeleted) || (lockTable[iLock]->isDeleted)){
+		fprintf(stderr, "Lock at index %d marked for deletion, cannot allow %s to wait \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV]->processOwner != currentThread->space){
+		fprintf(stderr, "CV at index %d not owned by current process, cannot allow %s to wait \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock]->processOwner != currentThread->space){
+		fprintf(stderr, "Lock at index %d not owned by current process, cannot allow %s to wait \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(!(lockTable[iLock]->lock->isHeldByCurrentThread())){
+		fprintf(stderr, "Lock at index %d not owned by current thread, cannot allow %s to wait \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	else {
+		printf("Thread %s is waiting on CV %s at index %d \n",
+				currentThread->getName(), conditionTable[iCV]->condition->getName(), iCV);
+		conditionTable[iCV]->condition->Wait(lockTable[iLock]->lock);
+	}
+	return 0;
+}
+
+int Signal_Syscall(int iCV, int iLock) { // TODO delete CV if no one is waiting on it and isToBeDeleted
+	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){
+		fprintf(stderr, "Invalid conditionTable index %d, cannot allow %s to signal \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((iLock < 0) || (iLock >= MAX_LOCKS)){
+		fprintf(stderr, "Invalid lockTable index %d, cannot allow %s to signal \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV] == NULL){
+		fprintf(stderr, "No Condition initialized at index %d, cannot allow %s to signal \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock] == NULL){
+		fprintf(stderr, "No Lock initialized at index %d, cannot allow %s to signal \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if((conditionTable[iCV]->isToBeDeleted) || (conditionTable[iCV]->isDeleted)){
+		fprintf(stderr, "CV at index %d marked for deletion, cannot allow %s to signal \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((lockTable[iLock]->isToBeDeleted) || (lockTable[iLock]->isDeleted)){
+		fprintf(stderr, "Lock at index %d marked for deletion, cannot allow %s to signal \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV]->processOwner != currentThread->space){
+		fprintf(stderr, "CV at index %d not owned by current process, cannot allow %s to signal \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock]->processOwner != currentThread->space){
+		fprintf(stderr, "Lock at index %d not owned by current process, cannot allow %s to signal \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(!(lockTable[iLock]->lock->isHeldByCurrentThread())){
+		fprintf(stderr, "Lock at index %d not owned by current thread, cannot allow %s to signal \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	else {
+		printf("Thread %s is signalling on CV %s at index %d \n",
+				currentThread->getName(), conditionTable[iCV]->condition->getName(), iCV);
+		conditionTable[iCV]->condition->Signal(lockTable[iLock]->lock);
+	}
+	return 0;
+}
+
+int Broadcast_Syscall(int iCV, int iLock) { // delete CV if no one is waiting on it and isToBeDeleted
+	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){
+		fprintf(stderr, "Invalid conditionTable index %d, cannot allow %s to broadcast \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((iLock < 0) || (iLock >= MAX_LOCKS)){
+		fprintf(stderr, "Invalid lockTable index %d, cannot allow %s to broadcast \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV] == NULL){
+		fprintf(stderr, "No Condition initialized at index %d, cannot allow %s to broadcast \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock] == NULL){
+		fprintf(stderr, "No Lock initialized at index %d, cannot allow %s to broadcast \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if((conditionTable[iCV]->isToBeDeleted) || (conditionTable[iCV]->isDeleted)){
+		fprintf(stderr, "CV at index %d marked for deletion, cannot allow %s to broadcast \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if((lockTable[iLock]->isToBeDeleted) || (lockTable[iLock]->isDeleted)){
+		fprintf(stderr, "Lock at index %d marked for deletion, cannot allow %s to broadcast \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(conditionTable[iCV]->processOwner != currentThread->space){
+		fprintf(stderr, "CV at index %d not owned by current process, cannot allow %s to broadcast \n", 
+				iCV, currentThread->getName());
+		return -1;
+	}
+	if(lockTable[iLock]->processOwner != currentThread->space){
+		fprintf(stderr, "Lock at index %d not owned by current process, cannot allow %s to broadcast \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	if(!(lockTable[iLock]->lock->isHeldByCurrentThread())){
+		fprintf(stderr, "Lock at index %d not owned by current thread, cannot allow %s to broadcast \n", 
+				iLock, currentThread->getName());
+		return -1;
+	}
+	else {
+		printf("Thread %s is broadcasting on CV %s at index %d \n",
+				currentThread->getName(), conditionTable[iCV]->condition->getName(), iCV);
+		conditionTable[iCV]->condition->Broadcast(lockTable[iLock]->lock);
+	}
+	return 0;
+}
+
+int CreateLock_Syscall(unsigned int vaddr, int len) {
+    char *buf = new char[len+1];	// Kernel buffer to put the name in
+
+    if (!buf) return -1;
+
+    if( copyin(vaddr,len,buf) == -1 ) {
+	printf("%s","Bad pointer passed to CreateLock\n");
+	delete buf;
+	return -1;
+    }
+
+    buf[len]='\0';
+    
+    lockTableIndex = -1;
+    for (int i = 0; i < MAX_LOCKS; i++)
+    {
+    	if (lockTable[i] == NULL){
+    		lockTableIndex = i;
+    		break;
+    	}
+    }
+    if (lockTableIndex == -1) {
+    	printf("%s","There are no available spaces to CreateLock\n");
+    	delete buf;
+    	return -1;
+    }
+ 
+    lockTable[lockTableIndex] = constructLockX(buf);
+    
+    if (lockTable[lockTableIndex] != NULL)
+  	printf("Created Lock %s at position %i\n",
+  			lockTable[lockTableIndex]->lock->getName(), lockTableIndex);
+    delete[] buf;
+    return lockTableIndex;
+}
+
+int DestroyLock_Syscall(int index){
+  if ((index >= MAX_LOCKS) || (index < 0)) {
+  	printf("Invalid Lock requested. Must be between 0 and %i\n",MAX_LOCKS);
+  	return -1;
+  	 
+  }
+  if (lockTable[index] == NULL) {
+  	printf("%s","Lock was never initialized\n");
+  	return -1;
+  }
+  /*if (lockTable[index]->isToBeDeleted == true) {
+  	printf("%s","Lock is already set to be deleted\n");
+  	return -1;
+  }*/
+  if (lockTable[index]->isDeleted) {
+  	printf("%s","Lock has already been deleted\n");
+  	return -1;
+  }
+  lockTable[index]->isDeleted = true;
+  if (lockTable[index]->isDeleted)
+ 	printf("Lock at index %i in the table was successfully destroyed\n",lockTableIndex);
+  return 0;
+}
+
+int CreateCondition_Syscall(unsigned int vaddr, int len){
+    char *buf = new char[len+1];	// Kernel buffer to put the name in
+	// Make sure memory was allocated for the name
+    if (!buf) {
+		printf("%s","Can't allocate kernel buffer in CreateCondition \n");
+		return -1;
+    }
+	// Validate name
+    if( copyin(vaddr,len,buf) == -1 ) {
+		printf("%s","Bad pointer passed to CreateCondition \n");
+		delete[] buf;
+		return -1;
+    }
+	// Append a null character to the name
+    buf[len]='\0';
+	
+	int conditionTableIndex = -1;
+		
+	for(int i = 0; i < MAX_CONDITIONS; i++){
+		if(conditionTable[i] == NULL){
+			conditionTableIndex = i;
+			break;
+		}
+	}
+	
+	if(conditionTableIndex == -1){
+		fprintf(stderr, "Thread %s: Condition not created, max number of conditions reached \n",
+				currentThread->getName());
+		return -1;
+	}
+	
+	conditionTable[conditionTableIndex] = constructConditionX(buf);
+	printf("Thread %s: Created Condition %s at position %d \n", 
+			currentThread->getName(), conditionTable[conditionTableIndex]->condition->getName(), conditionTableIndex);
+	delete[] buf;
+	return conditionTableIndex;	
+}
+
+int DestroyCondition_Syscall(int index){
+  if((index >= MAX_CONDITIONS) || (index < 0)) {
+  	printf("Thread %s: Invalid index in DestroyCondition. Must be between 0 and %d \n",
+  			currentThread->getName(), (MAX_CONDITIONS-1));
+  	return -1;
+  }
+  if(conditionTable[index] == NULL) {
+  	printf("Thread %s: Condition at index %d cannot be deleted because it was never initialized\n",
+  			currentThread->getName(), index);
+  	return -1;
+  }
+  if(conditionTable[index]->isDeleted) {
+  	printf("Thread %s: Condition at index %d has already been deleted\n",
+  			currentThread->getName(), index);
+  	return -1;
+  }
+  
+  // Condition can be deleted
+  conditionTable[index]->isToBeDeleted = true;
+  printf("Thread %s: Successfully destroyed Condition at index %d \n",
+  		 currentThread->getName(), index);
+  return 0;
+}
+
+void Printx_Syscall(unsigned int vaddr, int len, int id) {
+    char *buf;		// Kernel buffer for output
+    
+    if ( !(buf = new char[len]) ) {
+	printf("%s","Error allocating kernel buffer for write!\n");
+	return;
+    } else {
+        if ( copyin(vaddr,len,buf) == -1 ) {
+		    printf("%s","Bad pointer passed to to write: data not written\n");
+		    delete[] buf;
+		    return;
+		}
+    }
+
+    for (int ii=0; ii<len; ii++) {
+		printf("%c",buf[ii]);
+    }
+
+    delete[] buf;
+}
+
+/*Finished editing here*/
+
 void ExceptionHandler(ExceptionType which) {
     int type = machine->ReadRegister(2); // Which syscall?
     int rv=0; 	// the return value from a syscall
@@ -267,6 +757,72 @@ void ExceptionHandler(ExceptionType which) {
 		DEBUG('a', "Close syscall.\n");
 		Close_Syscall(machine->ReadRegister(4));
 		break;
+	/*Started editing here*/
+	    case SC_Fork:
+	    	DEBUG('a', "Fork syscall.\n");
+	    	Fork_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Yield:
+	    	DEBUG('a', "Yield syscall.\n");
+	    	Yield_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Exec:
+	    	DEBUG('a', "Exec syscall.\n");
+	    	Exec_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Exit:
+	    	DEBUG('a', "Exit syscall.\n");
+	    	Exit_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Acquire:
+	    	DEBUG('a', "Acquire syscall.\n");
+	    	rv = Acquire_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Release:
+	    	DEBUG('a', "Release syscall.\n");
+	    	rv = Release_Syscall(machine->ReadRegister(4));
+	    	break;
+	    case SC_Wait:
+	    	DEBUG('a', "Wait syscall.\n");
+	    	rv = Wait_Syscall(machine->ReadRegister(4),
+	    				 machine->ReadRegister(5));
+	    	break;
+	    case SC_Signal:
+	    	DEBUG('a', "Signal syscall.\n");
+	    	rv = Signal_Syscall(machine->ReadRegister(4),
+	    				   machine->ReadRegister(5));
+	    	break;
+	    case SC_Broadcast:
+	    	DEBUG('a', "Broadcast syscall.\n");
+	    	rv = Broadcast_Syscall(machine->ReadRegister(4),
+	    					  machine->ReadRegister(5));
+	    	break;
+	    case SC_CreateLock:
+	    	DEBUG('a', "CreateLock syscall.\n");
+	    	rv = CreateLock_Syscall(machine->ReadRegister(4),
+	    							machine->ReadRegister(5));
+	    	break;
+	    	case SC_DestroyLock:
+	    	DEBUG('a', "DestroyLock syscall.\n");
+	    	rv = DestroyLock_Syscall(machine->ReadRegister(4));
+	    	break;
+	   case SC_CreateCondition:
+	    	DEBUG('a', "CreateCondition syscall.\n");
+	    	rv = CreateCondition_Syscall(machine->ReadRegister(4),
+	    								 machine->ReadRegister(5));
+	    	break;
+	   case SC_DestroyCondition:
+	    	DEBUG('a', "DestroyCondition syscall.\n");
+	    	rv = DestroyCondition_Syscall(machine->ReadRegister(4));
+	    	break;
+	   case SC_Printx:
+	    	DEBUG('a', "Printx syscall.\n");
+	    	Printx_Syscall(machine->ReadRegister(4), 
+	    				   machine->ReadRegister(5),
+			      		   machine->ReadRegister(6));
+	    	break;
+	/*Finished editing here*/
+
 	}
 
 	// Put in the return value and increment the PC

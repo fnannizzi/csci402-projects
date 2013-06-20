@@ -369,12 +369,13 @@ void CarDriver(int index) {
 			}
 			
 			valetCarLineLock->Acquire(); // when acquired you are at the front of the line
+			printf("%s at front of car line \n", currentThread->getName());	
 			status = WAITING_FOR_LIMOS;
 		}
 		else if(status == WAITING_FOR_LIMOS){
 			numLimosWaitingToParkLock->Acquire();
 			numLimosWaitingToParkCV->Wait(numLimosWaitingToParkLock);
-			
+			printf("%s Signalled by numLimosWaitingToParkCV \n", currentThread->getName());	
 			if(numLimosWaitingToPark == 0){
 				status = SEARCHING_FOR_VALET;
 			}
@@ -397,7 +398,7 @@ void CarDriver(int index) {
 				valetStatusCV[i]->Signal(valetStatusLock[i]); // wake up all the sleeping valets
 				valetStatusLock[i]->Release(); // release the alert locks now that we have made our presence known
 			}
-			//printf("%s Signalled valets \n", currentThread->getName());	
+			printf("%s Signalled valets \n", currentThread->getName());	
 			// Wait for a signal from the next available valet
 			carWaitOnValetCV[index]->Wait(waitOnValetLock); 
 			//printf("%s Waiting on valet\n", currentThread->getName());
@@ -646,11 +647,11 @@ void Valet(int index) {
 			numLimosWaitingToParkLock->Release(); // release the lock around global int numLimosWaitingToPark
 				
 			// Wait to be signaled by either a driver or the manager
-			//printf("%s Waiting on driver\n", currentThread->getName());
+			printf("%s Waiting on driver\n", currentThread->getName());
 
 			valetStatusCV[index]->Wait(valetStatusLock[index]); 
 
-			//printf("%s Woken up \n", currentThread->getName());
+			printf("%s Woken up \n", currentThread->getName());
 			if(sleepingOnBench){ 
 				printf("%s has been woken up from the bench \n",
 						currentThread->getName());

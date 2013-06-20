@@ -13,6 +13,13 @@
 // Test 1 - Run a system test
 // --------------------------------------------------
 void test1(){ 
+
+	/* change */
+	numCars = 5;
+	numValets = 1;
+	numTicketTakers = 1;
+	/* end change */
+
 	InitializeData(numCars, numValets, numTicketTakers);	
 
 	Thread *t; // Used to fork threads    

@@ -42,7 +42,9 @@ main.o: ../threads/main.cc ../threads/copyright.h ../threads/utility.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/system.h \
   ../threads/thread.h ../threads/scheduler.h ../threads/list.h \
   ../machine/interrupt.h ../threads/list.h ../machine/stats.h \
-  ../machine/timer.h ../threads/utility.h
+  ../machine/timer.h ../threads/utility.h ../machine/translate.h \
+  ../threads/../filesys/openfile.h ../threads/copyright.h \
+  ../threads/utility.h
 list.o: ../threads/list.cc ../threads/copyright.h ../threads/list.h \
   ../threads/utility.h ../threads/bool.h ../machine/sysdep.h \
   ../threads/copyright.h \
@@ -90,7 +92,9 @@ scheduler.o: ../threads/scheduler.cc ../threads/copyright.h \
   /usr/include/sys/regset.h /usr/include/v7/sys/privregs.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/thread.h \
   ../threads/system.h ../machine/interrupt.h ../threads/list.h \
-  ../machine/stats.h ../machine/timer.h ../threads/utility.h
+  ../machine/stats.h ../machine/timer.h ../threads/utility.h \
+  ../machine/translate.h ../threads/../filesys/openfile.h \
+  ../threads/copyright.h ../threads/utility.h
 synch.o: ../threads/synch.cc ../threads/copyright.h ../threads/synch.h \
   ../threads/thread.h ../threads/utility.h ../threads/bool.h \
   ../machine/sysdep.h ../threads/copyright.h \
@@ -116,6 +120,8 @@ synch.o: ../threads/synch.cc ../threads/copyright.h ../threads/synch.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/list.h \
   ../threads/system.h ../threads/scheduler.h ../machine/interrupt.h \
   ../threads/list.h ../machine/stats.h ../machine/timer.h \
+  ../threads/utility.h ../machine/translate.h \
+  ../threads/../filesys/openfile.h ../threads/copyright.h \
   ../threads/utility.h
 synchlist.o: ../threads/synchlist.cc ../threads/copyright.h \
   ../threads/synchlist.h ../threads/list.h ../threads/utility.h \
@@ -166,6 +172,8 @@ system.o: ../threads/system.cc ../threads/copyright.h ../threads/system.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/thread.h \
   ../threads/scheduler.h ../threads/list.h ../machine/interrupt.h \
   ../threads/list.h ../machine/stats.h ../machine/timer.h \
+  ../threads/utility.h ../machine/translate.h \
+  ../threads/../filesys/openfile.h ../threads/copyright.h \
   ../threads/utility.h
 thread.o: ../threads/thread.cc ../threads/copyright.h ../threads/thread.h \
   ../threads/utility.h ../threads/bool.h ../machine/sysdep.h \
@@ -192,7 +200,9 @@ thread.o: ../threads/thread.cc ../threads/copyright.h ../threads/thread.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/switch.h \
   ../threads/synch.h ../threads/list.h ../threads/system.h \
   ../threads/scheduler.h ../machine/interrupt.h ../threads/list.h \
-  ../machine/stats.h ../machine/timer.h ../threads/utility.h
+  ../machine/stats.h ../machine/timer.h ../threads/utility.h \
+  ../machine/translate.h ../threads/../filesys/openfile.h \
+  ../threads/copyright.h ../threads/utility.h
 utility.o: ../threads/utility.cc ../threads/copyright.h \
   ../threads/utility.h ../threads/bool.h ../machine/sysdep.h \
   ../threads/copyright.h \
@@ -241,40 +251,9 @@ threadtest.o: ../threads/threadtest.cc ../threads/copyright.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/thread.h \
   ../threads/scheduler.h ../threads/list.h ../machine/interrupt.h \
   ../threads/list.h ../machine/stats.h ../machine/timer.h \
+  ../threads/utility.h ../machine/translate.h \
+  ../threads/../filesys/openfile.h ../threads/copyright.h \
   ../threads/utility.h ../threads/synch.h \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/cstdlib \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/sparc-sun-solaris2.10/bits/c++config.h \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/sparc-sun-solaris2.10/bits/os_defines.h \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/cstddef \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/include/stddef.h \
-  /usr/include/iso/stddef_iso.h
-p2.o: ../threads/p2.cc ../threads/copyright.h ../threads/system.h \
-  ../threads/utility.h ../threads/bool.h ../machine/sysdep.h \
-  ../threads/copyright.h \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/include/stdio.h \
-  /usr/include/stdarg.h /usr/include/iso/stdarg_iso.h \
-  /usr/include/sys/va_impl.h /usr/include/sys/va_list.h \
-  /usr/include/sys/isa_defs.h /usr/include/iso/stdarg_c99.h \
-  /usr/include/sys/feature_tests.h /usr/include/sys/ccompile.h \
-  /usr/include/iso/stdio_iso.h /usr/include/stdio_tag.h \
-  /usr/include/stdio_impl.h /usr/include/iso/stdio_c99.h \
-  /usr/include/string.h /usr/include/iso/string_iso.h \
-  /usr/include/stdlib.h /usr/include/iso/stdlib_iso.h \
-  /usr/include/iso/stdlib_c99.h /usr/include/sys/wait.h \
-  /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/include/sys/types.h \
-  /usr/include/sys/machtypes.h /usr/include/sys/int_types.h \
-  /usr/include/sys/select.h /usr/include/sys/time_impl.h \
-  /usr/include/sys/time.h /usr/include/time.h /usr/include/iso/time_iso.h \
-  /usr/include/sys/resource.h /usr/include/sys/siginfo.h \
-  /usr/include/sys/machsig.h /usr/include/sys/procset.h \
-  /usr/include/sys/signal.h /usr/include/sys/iso/signal_iso.h \
-  /usr/include/sys/unistd.h /usr/include/sys/ucontext.h \
-  /usr/include/sys/regset.h /usr/include/v7/sys/privregs.h \
-  /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/thread.h \
-  ../threads/scheduler.h ../threads/list.h ../machine/interrupt.h \
-  ../threads/list.h ../machine/stats.h ../machine/timer.h \
-  ../threads/utility.h ../threads/synch.h ../threads/p2functions.h \
-  ../threads/globaldata.h \
   /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/cstdlib \
   /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/sparc-sun-solaris2.10/bits/c++config.h \
   /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/../../../../include/c++/3.4.3/sparc-sun-solaris2.10/bits/os_defines.h \
@@ -397,7 +376,9 @@ interrupt.o: ../machine/interrupt.cc \
   ../threads/copyright.h ../threads/utility.h ../threads/bool.h \
   ../machine/sysdep.h ../threads/system.h ../threads/thread.h \
   ../threads/scheduler.h ../threads/list.h ../machine/interrupt.h \
-  ../machine/stats.h ../machine/timer.h ../threads/utility.h
+  ../machine/stats.h ../machine/timer.h ../threads/utility.h \
+  ../machine/translate.h ../threads/../filesys/openfile.h \
+  ../threads/copyright.h ../threads/utility.h
 sysdep.o: ../machine/sysdep.cc ../threads/copyright.h \
   /usr/include/stdlib.h /usr/include/iso/stdlib_iso.h \
   /usr/include/sys/feature_tests.h /usr/include/sys/ccompile.h \
@@ -441,7 +422,9 @@ sysdep.o: ../machine/sysdep.cc ../threads/copyright.h \
   ../threads/copyright.h ../threads/utility.h ../threads/bool.h \
   ../machine/sysdep.h ../threads/system.h ../threads/thread.h \
   ../threads/scheduler.h ../threads/list.h ../machine/interrupt.h \
-  ../machine/stats.h ../machine/timer.h ../threads/utility.h
+  ../machine/stats.h ../machine/timer.h ../threads/utility.h \
+  ../machine/translate.h ../threads/../filesys/openfile.h \
+  ../threads/copyright.h ../threads/utility.h
 stats.o: ../machine/stats.cc \
   /usr/sfw/lib/gcc/sparc-sun-solaris2.10/3.4.3/include/stdio.h \
   /usr/include/stdarg.h /usr/include/iso/stdarg_iso.h \
@@ -581,7 +564,9 @@ timer.o: ../machine/timer.cc ../threads/copyright.h ../machine/timer.h \
   /usr/include/v7/sys/psr.h /usr/include/sys/fsr.h ../threads/system.h \
   ../threads/utility.h ../threads/thread.h ../threads/scheduler.h \
   ../threads/list.h ../machine/interrupt.h ../threads/list.h \
-  ../machine/stats.h ../machine/timer.h
+  ../machine/stats.h ../machine/timer.h ../machine/translate.h \
+  ../threads/../filesys/openfile.h ../threads/copyright.h \
+  ../threads/utility.h
 # DEPENDENCIES MUST END AT END OF FILE
 # IF YOU PUT STUFF HERE IT WILL GO AWAY
 # see make depend above

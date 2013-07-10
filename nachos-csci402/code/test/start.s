@@ -171,24 +171,23 @@ Broadcast:
 	.end Broadcast
 
 	.globl CreateLock
-	.ent   CreateLock	
+	.ent	CreateLock	
 CreateLock:
 	addiu $2,$0,SC_CreateLock
 	syscall
 	j	$31
 	.end CreateLock
-
+	
 	.globl DestroyLock
-	.ent   DestroyLock	
+	.ent	DestroyLock	
 DestroyLock:
 	addiu $2,$0,SC_DestroyLock
 	syscall
 	j	$31
 	.end DestroyLock
-	
+
 	.globl CreateCondition
-	.ent   CreateCondition
-	
+	.ent	CreateCondition	
 CreateCondition:
 	addiu $2,$0,SC_CreateCondition
 	syscall
@@ -196,13 +195,20 @@ CreateCondition:
 	.end CreateCondition
 	
 	.globl DestroyCondition
-	.ent   DestroyCondition
-	
+	.ent	DestroyCondition	
 DestroyCondition:
 	addiu $2,$0,SC_DestroyCondition
 	syscall
 	j	$31
-	.end DestroyCondition	
+	.end DestroyCondition
+	
+	.globl Printx
+	.ent	Printx
+Printx:
+	addiu $2,$0,SC_Printx
+	syscall
+	j	$31
+	.end Printx
 /* ended editing here */
 
 /* dummy function to keep gcc happy */

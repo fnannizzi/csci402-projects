@@ -100,7 +100,12 @@ class Thread {
 						// overflowed its stack
     void setStatus(ThreadStatus st) { status = st; }
     char* getName() { return (name); }
+    void setMain() { isMainThread = TRUE; }
+    bool isMain() { return isMainThread; }
     void Print() { printf("%s, ", name); }
+    int* getStackTop() { return stackTop; }
+	int* getStackBottom() { return stack; }    
+	int id; //added this
 
   private:
     // some of the private data for this class is listed above
@@ -110,7 +115,7 @@ class Thread {
 					// (If NULL, don't deallocate stack)
     ThreadStatus status;		// ready, running or blocked
     char* name;
-
+	bool isMainThread; 	// used in exception.cc to determine if thread is the main thread of a proces
     void StackAllocate(VoidFunctionPtr func, int arg);
     					// Allocate a stack for thread.
 					// Used internally by Fork()

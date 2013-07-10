@@ -208,7 +208,7 @@ void Condition::Wait(Lock* conditionLock)
 		(void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
 		return;
 	}
-	//printf("%s is waiting on lock %s \n", currentThread->getName(), getName());
+	
 	conditionLock->Release(); // current thread has completed critical section
 	queue->Append((void *)currentThread);	// append to list of waiting threads
 	currentThread->Sleep(); // put current thread to sleep until signaled
@@ -244,14 +244,12 @@ void Condition::Signal(Lock* conditionLock)
 	Thread *thread = (Thread *)queue->Remove(); // remove one thread from wait queue
     if (thread != NULL)	
 	{
-		//printf("%s is adding %s to ready to run \n", currentThread->getName(), thread->getName());
 		scheduler->ReadyToRun(thread); // add to ready queue
 		//signaledprintf("Added thread %s to the ready queue\n", thread->getName());
 	}
 	
 	if(queue->IsEmpty()) // if no more waiting threads
 	{
-		//printf("%s found no waiting threads on lock %s \n", currentThread->getName(), getName());
 		waitingLock = NULL; // clear relationship with lock
 	}
 	
@@ -260,10 +258,8 @@ void Condition::Signal(Lock* conditionLock)
 
 void Condition::Broadcast(Lock* conditionLock) 
 {	
-	//printf("%s broadcasting on lock %s \n", currentThread->getName(), getName());
 	while(!queue->IsEmpty()) // for all threads waiting in queue
 	{
 		Signal(conditionLock); // signal next thread in wait queue
 	}
-	//printf("%s found no waiting threads on lock %s \n", currentThread->getName(), getName());
 }

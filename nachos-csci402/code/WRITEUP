@@ -1,0 +1,2777 @@
+Title: Writeup for Project 2, Summer 2013
+
+Date: 6/23/13
+
+Group Number 7: Name 				Email				Student ID
+
+				Francesca Nannizzi 	nannizzi@usc.edu		6330648898
+				
+				Merrick Bautista 	mlbautis@usc.edu		1134757772
+
+
+I. Requirements
+
+	This assignment requires the students to implement system calls to handle
+	multithreaded user programs. Additionally, the system calls should hande
+	multiprogramming by allowing multiple processes (up to a determined maximum)
+	to run concurrently. The system calls that were required were Exec, Fork,
+	Yield, Exit, CreateLock, DestroyLock, CreateCondition, DestroyCondition,
+	Acquire, Release, Wait, Signal, Broadcast, and a replacement for printf
+	(ours is Printx). These system calls must allow multithreaded user programs
+	to execute, but prevent them from accessing kernel data directly or
+	otherwise threatening the security of the operating system. 
+	
+	Secondly, the assignment requires conversion of the previous project's
+	museum code (which ran as part of the operating system, using C++) to a user
+	program. This involves eliminating all calls to the functions replaced by
+	our system calls, print statements using printf, and C++ code. The museum
+	is to run consistently as a multithreaded user program, as well as run
+	alongside a second museum process as a stress test of both multithreading
+	and multiprogramming.
+
+
+II. Assumptions
+
+	We make the assumption that no more than five user processes will be run at
+	any given time, as the MAX_PROCESSES defined in userprog/exception.cc is
+	five. Because a bitmap wasn't used to hold the current processes, the 
+	operating system runs five processes only. This means that new process can't
+	run after the fifth process completes because the array is maxed out (spaces
+	in the process table are not reused). We also assume that the user programs
+	will use less than MAX_LOCKS (500) locks and MAX_CONDITIONS (500)
+	conditions in total, as the spaces in the lock table and condition table are
+	not reused and no more than the maximum amount of locks and conditions can 
+	be created. Finally, we assume that the user programs can fit in 
+	numPhysPages (2000) of memory.
+
+III. Design
+
+	This design needs to support multiprogramming so our museum can be run
+	multiple times in parallel by the user.
+	In order to do this, we need to implement system calls like CreateLock,
+	Acquire, etc.
+	In these system calls, we need to protect the data, for processes can
+	disrupt other processes.
+	To protect this data, we will implement locks around all shared data.
+	We also need to ensure multiprogramming is enabled so we need to
+	reconstruct the address space constructor.
+	The address space constructor assumes each virtual page matches up with the
+	same physical page.
+	However, we needed to change this so that each virtual page gets mapped to
+	any available physical page.
+	This will enable us to run up to five processes in our code.
+	We will have to also ensure the data is being read from the appropriate
+	places as well.
+	Locks and CVs need to be specific to each process, so we need to ensure
+	that each process only grabs the locks and CVs they use.
+	We had to make some adjustments since we were using C programming.
+	We created our own Printx statement to show output.
+	We also had to make a little random function to simulate randomness.
+	We had to find a new way to create the parameters we previously passed our
+	threads, so we generated that in each thread as it was forked.
+	Our museum is designed using while wait loops so that each thread can be
+	signalled when necessary.
+	We followed the documentation to implement all system calls.
+	We added some extra parameters such as a name to fork, but soon found out
+	that it would not be needed.
+	We used structs to hold all the information we needed about locks, CVs, etc.
+
+
+IV. Implementation
+	Files modified: userprog/exception.cc
+					userprog/syscall.h
+					userprog/addrspace.h
+					userprog/addrspace.cc
+					
+					threads/synch.h
+					threads/system.cc
+					
+					machine/machine.h
+					
+					test/Makefile
+					test/start.s
+
+
+	Files added:		test/acquirelock.c
+					test/acquirelock1.c
+					test/acquirelock2.c
+					test/acquirelock3.c
+					test/broadcast.c
+					test/broadcast_destroy.c
+					test/broadcast_non_normative.c
+					test/broadcast_normative.c
+					test/broadcast_right_process.c
+					test/broadcast_wrong_process.c
+					test/createcondition.c
+					test/createcondition_test.c
+					test/createlock.c
+					test/createlock_test.c
+					test/destroycondition.c
+					test/destroycondition_right_process.c
+					test/destroycondition_wrong_process.c
+					test/destroylock.c
+					test/destroylock1.c
+					test/destroylock2.c
+					test/exec.c
+					test/exit.c
+					test/exit_test.c
+					test/fork.c
+					test/museum.c
+					test/printx.c
+					test/releaselock.c
+					test/releaselock1.c
+					test/releaselock2.c
+					test/releaselock3.c
+					test/signal.c
+					test/signal_destroy.c
+					test/signal_non_normative.c
+					test/signal_normative.c
+					test/signal_right_process.c
+					test/signal_wrong_process.c
+					test/wait.c
+					test/wait_destroy.c
+					test/wait_non_normative.c
+					test/wait_normative.c
+					test/wait_right_process.c
+					test/wait_wrong_process.c
+					test/yield.c
+					test/yield_test.c
+	
+	Data structures 
+	modified:		threads/synch.h/Condition
+						- added a function isQueueEmpty() so that the condition
+						can be destroyed if no one is waiting on it
+						
+					
+					
+	Data structures 
+	added:			userprog/exception.cc/lockTable
+						- holds MAX_LOCKS number of locks
+					userprog/exception.cc/conditionTable
+						- holds MAX_CONDITIONS number of conditions
+					userprog/exception.cc/processTable
+						- holds MAX_PROCESSES number of processes	
+					userprog/exception.cc/LockX
+						- added a struct to contain Lock data (bool
+						isTobeDeleted,bool isDeleted, Addrspace* processOwner,
+						Lock* lock), used to track locks in the lockTable 
+					userprog/exception.cc/ConditionX
+						- added a struct to contain Condition data (bool
+						isTobeDeleted,bool isDeleted, Addrspace* processOwner,
+						Condition* condition), used to track conditions in the
+						conditionTable
+					userprog/exception.cc/Process
+						- added a struct to contain Process data (int 
+						threadCount, int spaceID, Addrspace* processOwner),
+						used to track processes in the processTable
+					userprog/exception.cc/Lock* forkLock
+						- used to protect the thread count of a process when
+						forking new threads
+					userprog/exception.cc/Lock* execLock
+						- used to protect the process count when creating new
+						processes
+					userprog/exception.cc/Lock* processLock
+						- array of MAX_PROCESSES locks that ensures the
+						threadcount and processOwner data of each process is 
+						only being accessed by one thread within the process at
+						a time. Primarily used within Exit_Syscall(...)
+					userprog/exception.cc/Condition* processCV
+						- array of MAX_PROCESSES conditions that allows the main
+						thread of a process to wait until all its children have
+						exited before cleaning up the address space. The last
+						child thread to exit signals main using this condition.
+					
+	Functions 
+	modified:		userprog/exception.cc/
+						void Fork_Syscall(int, int, int)
+						
+						void Yield_Syscall()
+						
+						void Exec_Syscall(int, int)						
+
+						int Exit_Syscall(int)
+						
+						void ExceptionHandler(ExceptionType which)
+						
+					userprog/addrspace.cc/
+						AddrSpace::AddrSpace(OpenFile*)
+	
+	Functions
+	added:			userprog/exception.cc/
+						void Kernel_Thread(int)
+						
+						void Exec_Thread(int)
+						
+						void deleteStack()
+						
+						int Acquire_Syscall(int)
+						
+						int Release_Syscall(int)
+						
+						int Wait_Syscall(int, int)
+						
+						int Signal_Syscall(int, int)
+						
+						int Broadcast_Syscall(int, int)
+						
+						int CreateLock_Syscall(unsigned int, int)
+						
+						int DestroyLock_Syscall(int)
+						
+						int CreateCondition_Syscall(unsigned int, int)
+						
+						int DestroyCondition_Syscall(int)
+						
+						void Printx_Syscall(unsigned int, int, int)
+						
+					userprog/addrspace.cc/
+						int AddrSpace::MakeNewPT()	
+					
+					threads/synch.h/
+						bool Condition::isQueueEmpty()
+
+V. Testing
+
+	Syscall 
+	testing:		AcquireLock_Syscall
+					- Tests the AcquireLock_Syscall by attempting to acquire
+					locks using various incorrect indexes, which fails. Then the
+					test creates a new lock and acquires it successfully. The 
+					test attempts to acquire the lock again and fails. Then, 
+					a non-owner process attempts to acquire the lock and fails.
+					Finally, a third test creates and destroys a lock, then
+					attempts to acquire it, and fails.
+					
+					Execute: From userprog, run nachos -x ../test/acquirelock
+					
+					Test output:
+						
+						Test is attempting to acquire lock at index -1
+						Invalid Lock requested. Must be between 0 and 500
+						Lock not acquired
+
+						Test is attempting to acquire lock at index 200
+						Lock was never initialized
+						Lock not acquired
+
+						Test is attempting to acquire null lock at index 0
+						Lock was never initialized
+						Lock not acquired
+
+						Test is creating lock at index 0
+						Lock created successfully at index 0
+
+						Test is acquiring lock at index 0
+						Lock acquired successfully from index 0
+
+						Test is attempting to reacquire lock at index 0
+						Thread main already owns the lock it is attempting to
+						acquire.
+						Lock not acquired
+
+						Test1 is creating lock at index 1
+						Lock created successfully at index 1
+
+						Test2 is attempting to acquire lock at index 1
+						Lock is not owned by current processa
+						Lock not acquired
+
+						Test3.1 is creating lock at index 2
+						Lock created successfully at index 2
+
+						Test3.2 is destroying lock at index 2
+						Lock at index 2 in the table is set to be destroyed
+						Lock at index 2 successfully set to be destroyed
+
+						Test3.2 is attempting to acquire lock at index 2
+						Lock has already been set to be deleted
+						Lock has now been deleted
+						Lock not acquired
+
+						Test3.2 is attempting to acquire lock at index 2
+						Lock has already been deleted
+						Lock not acquired
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+
+						Ticks: total 1259, idle 0, system 690, user 569
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+
+						Cleaning up...
+
+					
+				Broadcast_Syscall
+					- Tests the Broadcast_Syscall by attempting to broadcast on
+					a CV belonging to another process, which accordingly fails
+					(wrong process test). Then tests various invalid indexes for
+					both the lock and condition, which fails until given a
+					correct index (non-normative test). Then tests broadcasting
+					on a destroyed lock and CV, which fails (destroyed test).
+					Then begins a test with two waiting threads and one
+					broadcaster, which proceeds normally and succeeds 
+					(normative test).
+					
+					Execute: From userprog, run nachos -x ../test/broadcast
+					
+					Test output:
+					
+						----------------------------------
+						Beginning wrong process test
+						----------------------------------
+						Created lock and CV in owner process
+						Non-owner process is broadcasting on a CV belonging to
+						another process
+						NCV at index 0 not owned by current process, cannot
+						allow threadexec to broadcast 
+						Non-owner not able to broadcast on the CV
+						Non-owner process created a new CV
+						NNon-owner process is broadcasting on a lock belonging
+						to another process
+						Lock at index 0 not owned by current process, cannot
+						allow threadexec to broadcast 
+						Non-owner not able to broadcast on the CV
+						----------------------------------
+						Beginning non-normative test
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 2 is waiting on a signal
+						Thread 3 is broadcasting before acquiring the lock
+						TLock at index 1 not owned by current thread, cannot
+						allow  to broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is acquiring the lock
+						Thread 3 is broadcasting with an invalid CV index
+						Invalid conditionTable index -1, cannot allow  to
+						broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is broadcasting with an invalid lock index
+						Invalid lockTable index -1, cannot allow  to broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is broadcasting with a null CV index
+						No Condition initialized at index 52, cannot allow  to
+						broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is broadcasting with a null lock index
+						No Lock initialized at index 51, cannot allow  to
+						broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is broadcasting the waiters
+						Thread 3 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						Thread 2 has been signalled
+						Thread 2 is releasing the lock
+						----------------------------------
+						Beginning test on destroyed lock and CV
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 3 is destroying the lock
+						Lock at index 2 in the table is set to be destroyed
+						Thread 3 is broadcasing using a destroyed lock
+						TLock at index 2 marked for deletion, cannot allow  to
+						broadcast 
+						Thread 3 not able to broadcast on the CV
+						Thread 3 is destroying the CV
+						Thread 3 is broadcasting using a destroyed CV
+						CV at index 3 deleted, cannot allow  to signal 
+						Thread 3 not able to broadcast on the CV
+						----------------------------------
+						Beginning normative test
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 2 is waiting on a signal
+						Thread 3 is acquiring the lock
+						Thread 3 is broadcasting
+						Thread 3 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						Thread 2 has been signalled
+						Thread 2 is releasing the lock
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+
+						Ticks: total 92236, idle 0, system 34710, user 57526
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+
+						Cleaning up...
+
+					
+				CreateCondition_Syscall
+					- Tests the CreateCondition_Syscall by creating 
+					MAX_CONDITIONS (500) number of conditions, which succeeds.
+					Then it attempts to create one more condition, which fails
+					because there is no more space in the condition table.
+					
+					Execute: In userprog, run nachos -x ../test/createcondition
+					
+					Test output:		
+					
+						Test is creating 500 CVs to fill up the table
+						CV created successfully at index 00
+						CV created successfully at index 01
+						CV created successfully at index 02
+						CV created successfully at index 03
+						
+						...
+						
+						CV created successfully at index 0496
+						CV created successfully at index 0497
+						CV created successfully at index 0498
+						CV created successfully at index 0499
+						
+						Test is attempting to create one more CV
+						Thread threadexec: Condition not created, 
+						max number of conditions reached 
+						CV not created
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 21324, idle 0, system 240, user 21084
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+						
+					
+				CreateLock_Syscall
+					- Tests the CreateLock_Syscall by creating MAX_LOCKS (500)
+					number of locks, which succeeds. Then it attempts to create
+					one more lock, which fails because there is no more space in
+					the lock table.
+					
+					Execute: From userprog, run nachos -x ../test/createlock
+					
+					Test output:				
+						
+						Test is creating 500 locks to faill up table
+						Lock created successfully at index 00
+						Lock created successfully at index 01
+						Lock created successfully at index 02
+						Lock created successfully at index 03
+						
+						...
+						
+						Lock created successfully at index 0496
+						Lock created successfully at index 0497
+						Lock created successfully at index 0498
+						Lock created successfully at index 0499
+						
+						Test is attempting to create one more lock
+						There are no available spaces to CreateLock
+						Lock not created
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 21322, idle 0, system 240, user 21082
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+						
+				DestroyCondition_Syscall
+					- Tests the DestroyCondition_Syscall by having an owner
+					process create and destroy a CV successfully. The owner
+					process attempts to destroy the CV a second time, which
+					fails. Then a non-owner process attempts to destroy a CV
+					using various invalid indexes, which fails. Finally, the
+					non-	owner process attempts to destroy the CV which is owner
+					by the other process, which fails.
+					
+					Execute: In userprog, run nachos -x ../test/destroycondition
+					
+					Test output:
+				
+						----------------------------------
+						Beginning destroycondition test
+						----------------------------------
+						Owner process is creating a new CV
+						OOwner process is destroying the CV
+						OOwner process is attempting to destroy the CV again
+						Thread threadexec: Condition at index 0 has already been
+						deleted
+						Owner not able to destroy CV
+						Non-owner process is attempting to destroy a CV using an
+						invalid index
+						NThread threadexec: Invalid index in DestroyCondition.
+						Must be between 0 and 499 
+						Non-owner not able to destroy CV
+						Non-owner process is attempting to destroy a CV using an
+						incorrect index
+						Thread threadexec: Invalid index in DestroyCondition.
+						Must be between 0 and 499 
+						Non-owner not able to destroy CV
+						Non-owner process is attempting to destroy a CV that
+						belongs to another process
+						Thread threadexec: Cannot delete Condition at index 0
+						because it is not owned by current process 
+						Non-owner not able to destroy CV
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 8738, idle 0, system 3380, user 5358
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+				DestroyLock_Syscall
+					- Tests the DestroyLock_Syscall by attempting to destroy a 
+					lock with various invalid indexes, which fails. Then, the
+					test creates and acquires a lock and attempts to destroy it,
+					which fails because a thread should not destroy a lock that
+					it owns. Then the test releases the lock and destroys it 
+					successfully. It attempts to destroy the lock again, which
+					fails. The test creates a second lock, and a second process
+					attempts to destroy it and fails.
+					
+					Execute: From userprog, run nachos -x ../test/destroylock
+					
+					Test output:
+				
+						Test is attempting to destroy a lock at index -1
+						Invalid Lock requested. Must be between 0 and 500
+						Lock not set to be destroyed
+						
+						Test is attempting to destroy a lock at index 200
+						Lock was never initialized
+						Lock not set to be destroyed
+						
+						Test is attempting to destroy a null lock at index 0
+						Lock was never initialized
+						Lock not set to be destroyed
+						
+						Test is creating a lock at index 0
+						Lock created successfully at index 0
+						
+						Test is acquiring lock at index 0
+						Lock acquired successfully from index 0
+						
+						Test is attempting to destroy previously acquired lock
+						at index 0
+						Lock is owned by current thread so cannot be destroyed
+						Lock not set to be destroyed
+						
+						Test is releasing lock at index 0
+						Lock released successfully from index 0
+						
+						Test is attempting to destroy previously released lock
+						at index 0
+						Lock at index 0 in the table is set to be destroyed
+						Lock at index 0 set to be destroyed
+						
+						Test is attempting to destroy previously destroyed lock
+						at index 0
+						Lock is already set to be deleted
+						Lock not set to be destroyed
+						
+						Test1 is creating lock at index 1
+						Lock created successfully at index 1
+						
+						Test2 is attempting to destroy lock at index 1
+						Lock is not owned by current process
+						Lock not set to be destroyed
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 869, idle 0, system 400, user 469
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+
+				Exec_Syscall
+					- Tests the Exec_Syscall by exec-ing five processes (the
+					fork.c file), which each fork three threads. We can see
+					each thread run.
+				
+					Execute: From userprog, run nachos -x ../test/exec
+					
+					Test output:
+					
+						Test0
+						Test1
+						Test2
+						Test0
+						Test1
+						Test2
+						Test0
+						Test1
+						Test2
+						Test0
+						Test1
+						Test2
+						Test0
+						Test1
+						Test2
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 18129, idle 0, system 7000, user 11129
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+					
+				Exit_Syscall
+					- Tests the Exit_Syscall by exec-ing five processes, which
+					each fork five threads. We can see each thread running
+					and exiting.
+				
+					Execute: From userprog, run nachos -x ../test/exit
+					
+					Test output:
+					
+						----------------------------------
+						Beginning exit test 1
+						----------------------------------
+						Thread 1 is running
+						Thread 1 is exiting
+						Thread 2 is running
+						Thread 2 is exiting
+						Thread 3 is running
+						Thread 3 is exiting
+						Thread 4 is running
+						Thread 4 is exiting
+						Thread 5 is running
+						Thread 5 is exiting
+						----------------------------------
+						Beginning exit test 2
+						----------------------------------
+						Thread 1 is running
+						Thread 1 is exiting
+						Thread 2 is running
+						Thread 2 is exiting
+						Thread 3 is running
+						Thread 3 is exiting
+						Thread 4 is running
+						Thread 4 is exiting
+						Thread 5 is running
+						Thread 5 is exiting
+						----------------------------------
+						Beginning exit test 3
+						----------------------------------
+						Thread 1 is running
+						Thread 1 is exiting
+						Thread 2 is running
+						Thread 2 is exiting
+						Thread 3 is running
+						Thread 3 is exiting
+						Thread 4 is running
+						Thread 4 is exiting
+						Thread 5 is running
+						Thread 5 is exiting
+						----------------------------------
+						Beginning exit test 4
+						----------------------------------
+						Thread 1 is running
+						Thread 1 is exiting
+						Thread 2 is running
+						Thread 2 is exiting
+						Thread 3 is running
+						Thread 3 is exiting
+						Thread 4 is running
+						Thread 4 is exiting
+						Thread 5 is running
+						Thread 5 is exiting
+						----------------------------------
+						Beginning exit test 5
+						----------------------------------
+						Thread 1 is running
+						Thread 1 is exiting
+						Thread 2 is running
+						Thread 2 is exiting
+						Thread 3 is running
+						Thread 3 is exiting
+						Thread 4 is running
+						Thread 4 is exiting
+						Thread 5 is running
+						Thread 5 is exiting
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 63497, idle 0, system 24800, user 38697
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+					
+					
+				Fork_Syscall
+					- Fork does not have its own test - instead it's wrapped 
+					inside the test for Exec_Syscall. (see Exec_Syscall)
+					
+				Printx_Syscall
+					- This test just prints a few integers to show that printing
+					is working properly.
+					
+					Execute: From userprog, run nachos -x ../test/printx
+					
+					Test output:
+					
+						Printing is working 151 345 10 24
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 287, idle 0, system 240, user 47
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+				
+				ReleaseLock_Syscall
+					- Tests the ReleaseLock_Syscall by attempting to release a
+					lock using various invalid indexes, which fails. Then it
+					creates a lock, and attempts to release without acquiring,
+					which fails. The test acquires the lock successfully, then
+					releases it successfully. It attempts to release the lock
+					a second time, which fails. A second test creates a new
+					lock, and a third test attempts to acquire it but fails
+					because the lock belongs to a different process. A fourth
+					test creates and acquires two locks, then creates a
+					condition and successfully waits on it. A second thread of
+					the fourth process acquires the remaining lock, destroys the
+					two previous locks, signals with the last lock, releases
+					the lock, and shows that locks are successfully deleted.
+				
+					Execute: From userprog, run nachos -x ../test/releaselock
+					
+					Test output:
+						
+						Test is attempting to release a lock at index -1
+						Invalid Lock requested. Must be between 0 and 500
+						Lock not released
+						
+						Test is attempting to release a lock at index 200
+						Lock was never initialized
+						Lock not released
+						
+						Test is attempting to release a null lock at index 0
+						Lock was never initialized
+						Lock not released
+						
+						Test is creating a lock at index 0
+						Lock created successfully at index 0
+						
+						Test is attempting to release lock at index 0 without
+						acquiring
+						Thread main does not own the lock it is attempting to
+						release
+						Lock not released
+						
+						Test is acquiring lock at index 0
+						Lock acquired successfully from index 0
+						
+						Test is releasing lock at index 0
+						Lock at index 0 released successfully
+						
+						Test is attempting to release previously released lock
+						at index 0
+						Thread main does not own the lock it is attempting to
+						release
+						Lock not released
+						
+						Test1 is creating lock at index 1
+						Lock created successfully at index 1
+						
+						Test2 is attempting to release lock at index 1
+						Lock is not owned by current process
+						Lock not released
+						
+						Test4.1 is creating lock at index 2
+						Lock created successfully at index 2
+						
+						Test4.1 is creating lock at index 3
+						Lock created successfully at index 3
+						
+						Test4.1 is acquiring lock at index 2
+						Lock acquired successfully from index 2
+						
+						Test4.1 is acquiring lock at index 3
+						Lock acquired successfully from index 3
+						
+						Test4.1 is creating CV at index 0
+						CV created successfully at index 0
+						
+						Test4.1 is waiting with CV 0 and Lock 3
+						
+						Test4.2 is acquiring lock at index 3
+						Lock acquired successfully from index 3
+						
+						Test4.2 is destroying lock at index 2
+						Lock at index 2 in the table is set to be destroyed
+						Lock at index 2 successfully set to be destroyed
+						
+						Test4.2 is signaling with CV 0 and Lock 3
+						CV is successfully signaling
+						
+						Test4.2 is releasing lock at index 3
+						Lock at index 3 released successfully
+						CV is successfully waiting
+						
+						Test4.1 is releasing lock at index 3
+						Lock at index 3 released successfully
+						
+						Test4.1 is releasing lock at index 2
+						Lock will now be deleted
+						Lock has been deleted
+						Lock at index 2 released successfully
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 1752, idle 0, system 780, user 972
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+
+				Signal_Syscall
+					- Tests the Signal_Syscall by attempting to signal on
+					a CV belonging to another process, which accordingly fails
+					(wrong process test). Then tests various invalid indexes for
+					both the lock and condition, which fails until given a
+					correct index (non-normative test). Then tests signalling
+					on a destroyed lock and CV, which fails (destroyed test).
+					Then begins a test with one waiting thread and one
+					signaller, which proceeds normally and succeeds (normative 
+					test).
+					
+					Execute: From userprog, run nachos -x ../test/signal
+					
+					Test output:
+					
+						----------------------------------
+						Beginning wrong process test
+						----------------------------------
+						Created lock and CV in owner process
+						Non-owner process is signalling on a CV belonging to
+						another process
+						CV at index 0 not owned by current process, cannot allow
+						threadexec to signal 
+						Non-owner not able to signal on the CV
+						NNon-owner process created a new CV
+						NNon-owner process is signalling on a lock belonging to
+						another process
+						Lock at index 0 not owned by current process, cannot
+						allow threadexec to signal 
+						Non-owner not able to signal on the CV
+						N----------------------------------
+						Beginning non-normative test
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is signalling the waiter before acquiring the
+						lock
+						Lock at index 1 not owned by current thread, cannot
+						allow  to signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is acquiring the lock
+						Thread 2 is signalling the waiter with an invalid CV
+						index
+						TInvalid conditionTable index -1, cannot allow  to
+						signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is signalling the waiter with an invalid lock
+						index
+						Invalid lockTable index -1, cannot allow  to signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is signalling the waiter with a null CV index
+						TNo Condition initialized at index 52, cannot allow  to
+						signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is signalling the waiter with a null lock index
+						No Lock initialized at index 51, cannot allow  to
+						signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is signalling the waiter
+						Thread 2 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						----------------------------------
+						Beginning test on destroyed lock and CV
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is destroying the lock
+						Lock at index 2 in the table is set to be destroyed
+						Thread 2 is signalling the waiter using a destroyed lock
+						Lock at index 2 not owned by current thread, cannot
+						allow  to signal 
+						Thread 2 not able to signal on the CV
+						Thread 2 is destroying the CV
+						Thread 2 is signalling the waiter using a destroyed CV
+						lCV at index 3 deleted, cannot allow  to signal 
+						Thread 2 not able to signal on the CV
+						----------------------------------
+						Beginning normative test
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 2 is signalling the waiter
+						Thread 2 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 51196, idle 0, system 19410, user 31786
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+					
+				Wait_Syscall
+					- Tests the Wait_Syscall by attempting to wait on
+					a CV belonging to another process, which accordingly fails
+					(wrong process test). Then tests various invalid indexes for
+					both the lock and condition, which fails until given a
+					correct index (non-normative test). Then tests waiting
+					on a destroyed lock and CV, which fails (destroyed test).
+					Then begins a test with one waiting thread and one
+					signaller, which proceeds normally and succeeds (normative 
+					test)
+					.
+					Execute: From userprog, run nachos -x ../test/wait
+					
+					Test output:
+						----------------------------------
+						Beginning wrong process test
+						----------------------------------
+						Created lock and CV in owner process
+						Non-owner process is waiting on a CV belonging to
+						another process
+						CV at index 0 not owned by current process, cannot allow
+						threadexec to wait 
+						Non-owner not able to wait on the CV
+						Non-owner process created a new CV
+						NNon-owner process is waiting on a lock belonging to
+						another process
+						Lock at index 0 not owned by current process, cannot
+						allow threadexec to wait 
+						Non-owner not able to wait on the CV
+						----------------------------------
+						Beginning non-normative test
+						----------------------------------
+						Thread 1 is waiting before acquiring the lock
+						Lock at index 1 not owned by current thread, cannot
+						allow wait_non_normative to wait 
+						Thread 1 not able to wait on the CV
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting with an invalid CV index
+						Invalid conditionTable index -1, cannot allow
+						wait_non_normative to wait 
+						Thread 1 not able to wait on the CV
+						Thread 1 is waiting with an invalid lock index
+						TInvalid lockTable index -1, cannot allow
+						wait_non_normative to wait 
+						Thread 1 not able to wait on the CV
+						Thread 1 is waiting with a null CV index
+						No Condition initialized at index 52, cannot allow
+						wait_non_normative to wait 
+						Thread 1 not able to wait on the CV
+						Thread 2 is waiting with a null lock index
+						TNo Lock initialized at index 51, cannot allow
+						wait_non_normative to wait 
+						Thread 1 not able to wait on the CV
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 2 is signalling the waiter
+						Thread 2 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						----------------------------------
+						Beginning test on destroyed lock and CV
+						----------------------------------
+						Thread 1 is destroying the lock
+						Lock at index 2 in the table is set to be destroyed
+						Thread 1 is waiting on a CV using a destroyed lock
+						TLock at index 2 marked for deletion, cannot allow
+						wait_destroy to wait 
+						Thread 1 not able to wait on the CV
+						Thread 1 is destroying the CV
+						Thread 1 is waiting on a destroyed CV
+						CV at index 3 marked for deletion, cannot allow
+						wait_destroy to wait 
+						Thread 1 not able to wait on the CV
+						----------------------------------
+						Beginning normative test
+						----------------------------------
+						Thread 1 is acquiring the lock
+						Thread 1 is waiting on a signal
+						Thread 2 is acquiring the lock
+						Thread 2 is signalling the waiter
+						Thread 2 is releasing the lock
+						Thread 1 has been signalled
+						Thread 1 is releasing the lock
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 67251, idle 0, system 25320, user 41931
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+									
+					
+				Yield_Syscall
+					- Tests the Yield_Syscall by calling it 100 times in a row.
+					The output prints each time the thread is ready to run.
+			
+					Execute: From userprog, run nachos -x ../test/yield
+					
+					Test output:
+					
+						----------------------------------
+						Beginning yield test
+						----------------------------------
+						Yield: 0
+						Yield: 1
+						
+						...
+						
+						Yield: 98
+						Yield: 99
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 5111, idle 0, system 1240, user 3871
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+
+	Museum 
+	simulation:	
+			
+				Uniprogramming
+					- Tests the museum in a multithreaded, uniprogrammed
+					environment by exec-ing a single instance of the museum.
+					
+					Execute: From userprog, run nachos -x ../test/uniprogrammed_museum.c
+					
+					Test output: 
+					
+						The Museum of Natural History Parking Simulation
+							1. System Test
+							2. Limos Park First, Then Cars Test
+							3. No Valet, No Parking Test
+							4. Ticket Taker Test
+							5. Drivers Leave Properly Test
+							6. Valet Manager Test - Sending Valet to Back Room
+							7. Valet Manager Test - Waking Up Valet From Back Room
+						Please enter one of the options above: Here
+						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
+						Number of CarDrivers = [0]
+						Number of ParkingValets = [3]
+						Number of Visitors = [30]
+						Number of TicketTakers = [3]
+						Number of Cars = [10]
+						Valet[0] is going to sleep on the bench
+						Valet[1] is going to sleep on the bench
+						Valet[2] is going to sleep on the bench
+						LimoDriver[0] has parked Car[0] at the Museum
+						LimoDriver[0] has told his visitors to leave Car[0]
+						LimoDriver[1] has parked Car[1] at the Museum
+						LimoDriver[1] has told his visitors to leave Car[1]
+						LimoDriver[2] has parked Car[2] at the Museum
+						LimoDriver[2] has told his visitors to leave Car[2]
+						LimoDriver[3] has parked Car[3] at the Museum
+						LimoDriver[3] has told his visitors to leave Car[3]
+						LimoDriver[4] has parked Car[4] at the Museum
+						LimoDriver[4] has told his visitors to leave Car[4]
+						LimoDriver[5] has parked Car[5] at the Museum
+						LimoDriver[5] has told his visitors to leave Car[5]
+						LimoDriver[6] has parked Car[6] at the Museum
+						LimoDriver[6] has told his visitors to leave Car[6]
+						LimoDriver[7] has parked Car[7] at the Museum
+						LimoDriver[7] has told his visitors to leave Car[7]
+						LimoDriver[8] has parked Car[8] at the Museum
+						LimoDriver[8] has told his visitors to leave Car[8]
+						LimoDriver[9] has parked Car[9] at the Museum
+						LimoDriver[9] has told his visitors to leave Car[9]
+						Visitor[0] has been told to exit Car[0]
+						Visitor[0] has exited Car[0]
+						Visitor[0] is waiting for TicketTaker[0]
+						Visitor[1] has been told to exit Car[0]
+						Visitor[1] has exited Car[0]
+						Visitor[1] is waiting for TicketTaker[1]
+						Visitor[2] has been told to exit Car[1]
+						Visitor[2] has exited Car[1]
+						Visitor[2] is waiting for TicketTaker[2]
+						Visitor[3] has been told to exit Car[1]
+						Visitor[3] has exited Car[1]
+						Visitor[4] has been told to exit Car[1]
+						Visitor[4] has exited Car[1]
+						Visitor[5] has been told to exit Car[1]
+						Visitor[5] has exited Car[1]
+						Visitor[6] has been told to exit Car[2]
+						Visitor[6] has exited Car[2]
+						Visitor[7] has been told to exit Car[3]
+						Visitor[7] has exited Car[3]
+						Visitor[8] has been told to exit Car[3]
+						Visitor[8] has exited Car[3]
+						Visitor[9] has been told to exit Car[3]
+						Visitor[9] has exited Car[3]
+						Visitor[10] has been told to exit Car[4]
+						Visitor[10] has exited Car[4]
+						Visitor[11] has been told to exit Car[4]
+						Visitor[11] has exited Car[4]
+						Visitor[12] has been told to exit Car[4]
+						Visitor[12] has exited Car[4]
+						Visitor[13] has been told to exit Car[4]
+						Visitor[13] has exited Car[4]
+						Visitor[14] has been told to exit Car[4]
+						Visitor[14] has exited Car[4]
+						Visitor[15] has been told to exit Car[5]
+						Visitor[15] has exited Car[5]
+						Visitor[16] has been told to exit Car[5]
+						Visitor[16] has exited Car[5]
+						Visitor[17] has been told to exit Car[6]
+						Visitor[17] has exited Car[6]
+						Visitor[18] has been told to exit Car[6]
+						Visitor[18] has exited Car[6]
+						Visitor[19] has been told to exit Car[6]
+						Visitor[19] has exited Car[6]
+						Visitor[20] has been told to exit Car[6]
+						Visitor[20] has exited Car[6]
+						Visitor[21] has been told to exit Car[7]
+						Visitor[21] has exited Car[7]
+						Visitor[22] has been told to exit Car[8]
+						Visitor[22] has exited Car[8]
+						Visitor[23] has been told to exit Car[8]
+						Visitor[23] has exited Car[8]
+						Visitor[24] has been told to exit Car[8]
+						Visitor[24] has exited Car[8]
+						Visitor[25] has been told to exit Car[9]
+						Visitor[25] has exited Car[9]
+						Visitor[26] has been told to exit Car[9]
+						Visitor[26] has exited Car[9]
+						Visitor[27] has been told to exit Car[9]
+						Visitor[27] has exited Car[9]
+						Visitor[28] has been told to exit Car[9]
+						Visitor[28] has exited Car[9]
+						Visitor[29] has been told to exit Car[9]
+						Visitor[29] has exited Car[9]
+						Visitor[0] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[1] has given their ticket to TicketTaker[1]
+						Visitor[2] has given their ticket to TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						Valet[2] has been woken up from the bench
+						TicketTaker[0] has received a ticket from Visitor[0]
+						TicketTaker[0] has accepted a ticket from Visitor[0]
+						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
+						TicketTaker[1] has received a ticket from Visitor[1]
+						TicketTaker[2] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[2]
+						TicketTaker[4] has accepted a ticket from Visitor[0]
+						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
+						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
+						Visitor[0] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
+						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
+						Visitor[1] has entered the Museum
+						Visitor[2] has entered the Museum
+						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
+						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
+						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
+						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
+						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
+						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
+						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
+						Visitor[3] is waiting for TicketTaker[0]
+						Valet[0] is parking Car[0]
+						Visitor[4] is waiting for TicketTaker[1]
+						Visitor[5] is waiting for TicketTaker[2]
+						Valet[1] is parking Car[1]
+						Valet[2] is parking Car[2]
+						Visitor[3] has given their ticket to TicketTaker[0]
+						Visitor[4] has given their ticket to TicketTaker[1]
+						Visitor[5] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[3]
+						TicketTaker[3] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[4]
+						TicketTaker[5] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[5]
+						TicketTaker[7] has accepted a ticket from Visitor[0]
+						EVisitor[3] has entered the Museum
+						Visitor[4] has entered the Museum
+						Visitor[5] has entered the Museum
+						Visitor[6] is waiting for TicketTaker[0]
+						Visitor[7] is waiting for TicketTaker[1]
+						Visitor[8] is waiting for TicketTaker[2]
+						Visitor[6] has given their ticket to TicketTaker[0]
+						Visitor[7] has given their ticket to TicketTaker[1]
+						Visitor[8] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[6]
+						TicketTaker[6] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[7]
+						TicketTaker[8] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[8]
+						TicketTaker[10] has accepted a ticket from Visitor[0]
+						EVisitor[6] has entered the Museum
+						Visitor[7] has entered the Museum
+						Visitor[8] has entered the Museum
+						Valet[1] is going to sleep on the bench
+						Valet[0] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Visitor[9] is waiting for TicketTaker[0]
+						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
+						Visitor[10] is waiting for TicketTaker[1]
+						Visitor[11] is waiting for TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						ValetManager has detected four (or more cars) waiting to be parked
+						Valet[0] has received the keys from LimousineDriver[63] for Car[3]
+						Valet[0] has given LimousineDriver[3] ParkingToken[3] for Car[3]
+						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
+						Valet[2] has been woken up from the bench
+						Visitor[9] has given their ticket to TicketTaker[0]
+						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
+						Visitor[10] has given their ticket to TicketTaker[1]
+						Visitor[11] has given their ticket to TicketTaker[2]
+						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
+						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
+						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
+						TicketTaker[0] has received a ticket from Visitor[9]
+						TicketTaker[9] has accepted a ticket from Visitor[0]
+						EValet[3] is parking Car[3]
+						TicketTaker[1] has received a ticket from Visitor[10]
+						TicketTaker[11] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[11]
+						TicketTaker[13] has accepted a ticket from Visitor[0]
+						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
+						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
+						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
+						Visitor[9] has entered the Museum
+						Visitor[10] has entered the Museum
+						Visitor[11] has entered the Museum
+						Valet[4] is parking Car[4]
+						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
+						Valet[5] is parking Car[5]
+						Visitor[12] is waiting for TicketTaker[0]
+						Visitor[13] is waiting for TicketTaker[1]
+						Visitor[14] is waiting for TicketTaker[2]
+						Visitor[12] has given their ticket to TicketTaker[0]
+						Visitor[13] has given their ticket to TicketTaker[1]
+						Visitor[14] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[12]
+						TicketTaker[12] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[13]
+						TicketTaker[14] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[14]
+						TicketTaker[16] has accepted a ticket from Visitor[0]
+						EVisitor[12] has entered the Museum
+						Visitor[13] has entered the Museum
+						Visitor[14] has entered the Museum
+						Visitor[15] is waiting for TicketTaker[0]
+						Visitor[16] is waiting for TicketTaker[1]
+						Visitor[17] is waiting for TicketTaker[2]
+						Visitor[15] has given their ticket to TicketTaker[0]
+						Visitor[16] has given their ticket to TicketTaker[1]
+						Visitor[17] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[15]
+						TicketTaker[15] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[16]
+						TicketTaker[17] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[17]
+						TicketTaker[19] has accepted a ticket from Visitor[0]
+						EVisitor[15] has entered the Museum
+						Visitor[16] has entered the Museum
+						Visitor[17] has entered the Museum
+						Valet[0] has been woken up from the bench
+						Valet[1] is going to sleep on the bench
+						Visitor[18] is waiting for TicketTaker[0]
+						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
+						Visitor[19] is waiting for TicketTaker[1]
+						Visitor[20] is waiting for TicketTaker[2]
+						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
+						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
+						Valet[1] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Visitor[18] has given their ticket to TicketTaker[0]
+						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
+						Visitor[19] has given their ticket to TicketTaker[1]
+						Visitor[20] has given their ticket to TicketTaker[2]
+						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
+						TicketTaker[0] has received a ticket from Visitor[18]
+						TicketTaker[18] has accepted a ticket from Visitor[0]
+						EValet[6] is parking Car[6]
+						TicketTaker[1] has received a ticket from Visitor[19]
+						TicketTaker[20] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[20]
+						TicketTaker[22] has accepted a ticket from Visitor[0]
+						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
+						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
+						Valet[2] has been woken up from the bench
+						Visitor[18] has entered the Museum
+						Visitor[19] has entered the Museum
+						Visitor[20] has entered the Museum
+						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
+						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
+						Valet[7] is parking Car[7]
+						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
+						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
+						Visitor[21] is waiting for TicketTaker[0]
+						Visitor[22] is waiting for TicketTaker[1]
+						Visitor[23] is waiting for TicketTaker[2]
+						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
+						Valet[8] is parking Car[8]
+						Visitor[21] has given their ticket to TicketTaker[0]
+						Visitor[22] has given their ticket to TicketTaker[1]
+						Visitor[23] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[21]
+						TicketTaker[21] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[22]
+						TicketTaker[23] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[23]
+						TicketTaker[25] has accepted a ticket from Visitor[0]
+						EVisitor[21] has entered the Museum
+						Visitor[22] has entered the Museum
+						Visitor[23] has entered the Museum
+						Visitor[24] is waiting for TicketTaker[0]
+						Visitor[25] is waiting for TicketTaker[1]
+						Visitor[26] is waiting for TicketTaker[2]
+						Visitor[24] has given their ticket to TicketTaker[0]
+						Visitor[25] has given their ticket to TicketTaker[1]
+						Visitor[26] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[24]
+						TicketTaker[24] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[25]
+						TicketTaker[26] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[26]
+						TicketTaker[28] has accepted a ticket from Visitor[0]
+						EVisitor[24] has entered the Museum
+						Visitor[25] has entered the Museum
+						Visitor[26] has entered the Museum
+						Visitor[27] is waiting for TicketTaker[0]
+						Visitor[0] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[28] is waiting for TicketTaker[1]
+						Visitor[1] has left the Museum
+						Visitor[29] is waiting for TicketTaker[2]
+						Visitor[2] has left the Museum
+						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
+						Visitor[27] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[28] has given their ticket to TicketTaker[1]
+						Visitor[29] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[27]
+						TicketTaker[27] has accepted a ticket from Visitor[0]
+						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
+						TicketTaker[1] has received a ticket from Visitor[28]
+						TicketTaker[29] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[29]
+						TicketTaker[31] has accepted a ticket from Visitor[0]
+						EValet[1] is going to sleep on the bench
+						Visitor[27] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
+						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
+						Visitor[28] has entered the Museum
+						Visitor[29] has entered the Museum
+						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
+						Visitor[3] has left the Museum
+						Valet[9] is parking Car[9]
+						Visitor[4] has left the Museum
+						Visitor[5] has left the Museum
+						Valet[2] is going to sleep on the bench
+						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
+						Valet[1] has been woken up from the bench
+						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
+						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
+						Visitor[6] has left the Museum
+						Visitor[7] has left the Museum
+						Visitor[8] has left the Museum
+						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
+						Valet[2] has been woken up from the bench
+						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
+						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
+						Visitor[9] has left the Museum
+						Visitor[10] has left the Museum
+						Visitor[11] has left the Museum
+						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
+						Visitor[12] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[13] has left the Museum
+						Visitor[14] has left the Museum
+						ValetManager has detected four (or more cars) waiting to be parked
+						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
+						Valet[0] has been woken up from the bench
+						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
+						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
+						Valet[1] has given LimousineDriver[1] Car[1]
+						Visitor[15] has left the Museum
+						Visitor[16] has left the Museum
+						Visitor[17] has left the Museum
+						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
+						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
+						Valet[1] has received tip from LimousineDriver[1] for Car[1]
+						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
+						LimoDriver[1] has told his visitors to get into Car[1]
+						Valet[0] has given LimousineDriver[0] Car[0]
+						Visitor[2] has been told to get into Car[1]
+						Visitor[2] has gotten into Car[1] and is waiting to leave
+						Visitor[3] has been told to get into Car[1]
+						Visitor[3] has gotten into Car[1] and is waiting to leave
+						Visitor[4] has been told to get into Car[1]
+						Visitor[4] has gotten into Car[1] and is waiting to leave
+						Visitor[5] has been told to get into Car[1]
+						Visitor[5] has gotten into Car[1] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
+						LimoDriver[1] has left the Museum in Car[1]
+						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
+						Valet[0] has received tip from LimousineDriver[0] for Car[0]
+						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
+						Valet[0] is going to sleep on the bench
+						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
+						Visitor[18] has left the Museum
+						Valet[2] has given LimousineDriver[2] Car[2]
+						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
+						LimoDriver[0] has told his visitors to get into Car[0]
+						Visitor[19] has left the Museum
+						Visitor[20] has left the Museum
+						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
+						Visitor[0] has been told to get into Car[0]
+						Visitor[0] has gotten into Car[0] and is waiting to leave
+						Visitor[1] has been told to get into Car[0]
+						Visitor[1] has gotten into Car[0] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
+						Valet[2] has received tip from LimousineDriver[2] for Car[2]
+						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
+						Valet[2] is going to sleep on the bench
+						LimoDriver[0] has left the Museum in Car[0]
+						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
+						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
+						LimoDriver[2] has told his visitors to get into Car[2]
+						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
+						Visitor[6] has been told to get into Car[2]
+						Visitor[6] has gotten into Car[2] and is waiting to leave
+						Valet[2] has been woken up from the bench
+						LimoDriver[2] has left the Museum in Car[2]
+						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
+						Valet[1] has given LimousineDriver[4] Car[4]
+						Visitor[21] has left the Museum
+						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
+						Visitor[22] has left the Museum
+						Visitor[23] has left the Museum
+						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
+						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
+						Valet[1] has received tip from LimousineDriver[4] for Car[4]
+						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
+						LimoDriver[4] has told his visitors to get into Car[4]
+						Visitor[10] has been told to get into Car[4]
+						Visitor[10] has gotten into Car[4] and is waiting to leave
+						Visitor[11] has been told to get into Car[4]
+						Visitor[11] has gotten into Car[4] and is waiting to leave
+						Visitor[12] has been told to get into Car[4]
+						Visitor[12] has gotten into Car[4] and is waiting to leave
+						Visitor[13] has been told to get into Car[4]
+						Visitor[13] has gotten into Car[4] and is waiting to leave
+						Visitor[14] has been told to get into Car[4]
+						Visitor[14] has gotten into Car[4] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						Valet[0] has given LimousineDriver[3] Car[3]
+						LimoDriver[4] has left the Museum in Car[4]
+						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
+						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
+						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
+						Visitor[24] has left the Museum
+						Valet[0] has received tip from LimousineDriver[3] for Car[3]
+						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
+						Valet[0] is going to sleep on the bench
+						Visitor[25] has left the Museum
+						Visitor[26] has left the Museum
+						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
+						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
+						LimoDriver[3] has told his visitors to get into Car[3]
+						Valet[2] has given LimousineDriver[5] Car[5]
+						Visitor[7] has been told to get into Car[3]
+						Visitor[7] has gotten into Car[3] and is waiting to leave
+						Visitor[8] has been told to get into Car[3]
+						Visitor[8] has gotten into Car[3] and is waiting to leave
+						Visitor[9] has been told to get into Car[3]
+						Visitor[9] has gotten into Car[3] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
+						LimoDriver[3] has left the Museum in Car[3]
+						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
+						Valet[2] has received tip from LimousineDriver[5] for Car[5]
+						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
+						Valet[2] is going to sleep on the bench
+						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
+						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
+						LimoDriver[5] has told his visitors to get into Car[5]
+						Visitor[27] has left the Museum
+						Visitor[15] has been told to get into Car[5]
+						Visitor[15] has gotten into Car[5] and is waiting to leave
+						Visitor[16] has been told to get into Car[5]
+						Visitor[16] has gotten into Car[5] and is waiting to leave
+						Visitor[28] has left the Museum
+						Visitor[29] has left the Museum
+						LimoDriver[5] has left the Museum in Car[5]
+						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
+						Valet[2] has been woken up from the bench
+						Valet[1] has given LimousineDriver[7] Car[7]
+						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
+						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
+						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
+						Valet[1] has received tip from LimousineDriver[7] for Car[7]
+						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
+						LimoDriver[7] has told his visitors to get into Car[7]
+						Visitor[21] has been told to get into Car[7]
+						Visitor[21] has gotten into Car[7] and is waiting to leave
+						LimoDriver[7] has left the Museum in Car[7]
+						Valet[0] has given LimousineDriver[6] Car[6]
+						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
+						Valet[0] has received tip from LimousineDriver[6] for Car[6]
+						Valet[0] has returned keys to LimousineDriver[6] for Car[6]
+						Valet[0] is going to sleep on the bench
+						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
+						LimoDriver[6] has told his visitors to get into Car[6]
+						Visitor[17] has been told to get into Car[6]
+						Visitor[17] has gotten into Car[6] and is waiting to leave
+						Visitor[18] has been told to get into Car[6]
+						Visitor[18] has gotten into Car[6] and is waiting to leave
+						Visitor[19] has been told to get into Car[6]
+						Visitor[19] has gotten into Car[6] and is waiting to leave
+						Visitor[20] has been told to get into Car[6]
+						Visitor[20] has gotten into Car[6] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[6] has left the Museum in Car[6]
+						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
+						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
+						Valet[2] has given LimousineDriver[9] Car[9]
+						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
+						Valet[2] has received tip from LimousineDriver[9] for Car[9]
+						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
+						Valet[2] is going to sleep on the bench
+						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
+						LimoDriver[9] has told his visitors to get into Car[9]
+						Visitor[25] has been told to get into Car[9]
+						Visitor[25] has gotten into Car[9] and is waiting to leave
+						Visitor[26] has been told to get into Car[9]
+						Visitor[26] has gotten into Car[9] and is waiting to leave
+						Visitor[27] has been told to get into Car[9]
+						Visitor[27] has gotten into Car[9] and is waiting to leave
+						Visitor[28] has been told to get into Car[9]
+						Visitor[28] has gotten into Car[9] and is waiting to leave
+						Visitor[29] has been told to get into Car[9]
+						Visitor[29] has gotten into Car[9] and is waiting to leave
+						LimoDriver[9] has left the Museum in Car[9]
+						Valet[0] has given LimousineDriver[8] Car[8]
+						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
+						Valet[0] has received tip from LimousineDriver[8] for Car[8]
+						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
+						Valet[0] is going to sleep on the bench
+						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
+						LimoDriver[8] has told his visitors to get into Car[8]
+						Visitor[22] has been told to get into Car[8]
+						Visitor[22] has gotten into Car[8] and is waiting to leave
+						Visitor[23] has been told to get into Car[8]
+						Visitor[23] has gotten into Car[8] and is waiting to leave
+						Visitor[24] has been told to get into Car[8]
+						Visitor[24] has gotten into Car[8] and is waiting to leave
+						LimoDriver[8] has left the Museum in Car[8]
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 174720, idle 0, system 43420, user 131300
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+					
+				Multiprogramming
+					- Tests the museum in a multithreaded, multiprogrammed
+					environment by exec-ing two instances of the museum.
+					
+					Execute: From userprog, run nachos -x ../test/multiprogrammed_museum.c
+					
+					Test output:
+					
+						The Museum of Natural History Parking Simulation
+							1. System Test
+							2. Limos Park First, Then Cars Test
+							3. No Valet, No Parking Test
+							4. Ticket Taker Test
+							5. Drivers Leave Properly Test
+							6. Valet Manager Test - Sending Valet to Back Room
+							7. Valet Manager Test - Waking Up Valet From Back Room
+						Please enter one of the options above: Here
+						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
+						Number of CarDrivers = [0]
+						Number of ParkingValets = [3]
+						Number of Visitors = [30]
+						Number of TicketTakers = [3]
+						Number of Cars = [10]
+						The Museum of Natural History Parking Simulation
+							1. System Test
+							2. Limos Park First, Then Cars Test
+							3. No Valet, No Parking Test
+							4. Ticket Taker Test
+							5. Drivers Leave Properly Test
+							6. Valet Manager Test - Sending Valet to Back Room
+							7. Valet Manager Test - Waking Up Valet From Back Room
+						Please enter one of the options above: Here
+						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
+						Number of CarDrivers = [0]
+						Number of ParkingValets = [3]
+						Number of Visitors = [30]
+						Number of TicketTakers = [3]
+						Number of Cars = [10]
+						Valet[0] is going to sleep on the bench
+						Valet[1] is going to sleep on the bench
+						Valet[2] is going to sleep on the bench
+						Valet[0] is going to sleep on the bench
+						Valet[1] is going to sleep on the bench
+						Valet[2] is going to sleep on the bench
+						LimoDriver[0] has parked Car[0] at the Museum
+						LimoDriver[0] has told his visitors to leave Car[0]
+						LimoDriver[1] has parked Car[1] at the Museum
+						LimoDriver[1] has told his visitors to leave Car[1]
+						LimoDriver[2] has parked Car[2] at the Museum
+						LimoDriver[2] has told his visitors to leave Car[2]
+						LimoDriver[3] has parked Car[3] at the Museum
+						LimoDriver[3] has told his visitors to leave Car[3]
+						LimoDriver[4] has parked Car[4] at the Museum
+						LimoDriver[4] has told his visitors to leave Car[4]
+						LimoDriver[5] has parked Car[5] at the Museum
+						LimoDriver[5] has told his visitors to leave Car[5]
+						LimoDriver[6] has parked Car[6] at the Museum
+						LimoDriver[6] has told his visitors to leave Car[6]
+						LimoDriver[7] has parked Car[7] at the Museum
+						LimoDriver[7] has told his visitors to leave Car[7]
+						LimoDriver[8] has parked Car[8] at the Museum
+						LimoDriver[8] has told his visitors to leave Car[8]
+						LimoDriver[9] has parked Car[9] at the Museum
+						LimoDriver[9] has told his visitors to leave Car[9]
+						LimoDriver[0] has parked Car[0] at the Museum
+						LimoDriver[0] has told his visitors to leave Car[0]
+						LimoDriver[1] has parked Car[1] at the Museum
+						LimoDriver[1] has told his visitors to leave Car[1]
+						LimoDriver[2] has parked Car[2] at the Museum
+						LimoDriver[2] has told his visitors to leave Car[2]
+						LimoDriver[3] has parked Car[3] at the Museum
+						LimoDriver[3] has told his visitors to leave Car[3]
+						LimoDriver[4] has parked Car[4] at the Museum
+						LimoDriver[4] has told his visitors to leave Car[4]
+						LimoDriver[5] has parked Car[5] at the Museum
+						LimoDriver[5] has told his visitors to leave Car[5]
+						LimoDriver[6] has parked Car[6] at the Museum
+						LimoDriver[6] has told his visitors to leave Car[6]
+						LimoDriver[7] has parked Car[7] at the Museum
+						LimoDriver[7] has told his visitors to leave Car[7]
+						LimoDriver[8] has parked Car[8] at the Museum
+						LimoDriver[8] has told his visitors to leave Car[8]
+						LimoDriver[9] has parked Car[9] at the Museum
+						LimoDriver[9] has told his visitors to leave Car[9]
+						Visitor[0] has been told to exit Car[0]
+						Visitor[0] has exited Car[0]
+						Visitor[0] is waiting for TicketTaker[0]
+						Visitor[1] has been told to exit Car[0]
+						Visitor[1] has exited Car[0]
+						Visitor[1] is waiting for TicketTaker[1]
+						Visitor[2] has been told to exit Car[1]
+						Visitor[2] has exited Car[1]
+						Visitor[2] is waiting for TicketTaker[2]
+						Visitor[3] has been told to exit Car[1]
+						Visitor[3] has exited Car[1]
+						Visitor[4] has been told to exit Car[1]
+						Visitor[4] has exited Car[1]
+						Visitor[5] has been told to exit Car[1]
+						Visitor[5] has exited Car[1]
+						Visitor[6] has been told to exit Car[2]
+						Visitor[6] has exited Car[2]
+						Visitor[7] has been told to exit Car[3]
+						Visitor[7] has exited Car[3]
+						Visitor[8] has been told to exit Car[3]
+						Visitor[8] has exited Car[3]
+						Visitor[9] has been told to exit Car[3]
+						Visitor[9] has exited Car[3]
+						Visitor[10] has been told to exit Car[4]
+						Visitor[10] has exited Car[4]
+						Visitor[11] has been told to exit Car[4]
+						Visitor[11] has exited Car[4]
+						Visitor[12] has been told to exit Car[4]
+						Visitor[12] has exited Car[4]
+						Visitor[13] has been told to exit Car[4]
+						Visitor[13] has exited Car[4]
+						Visitor[14] has been told to exit Car[4]
+						Visitor[14] has exited Car[4]
+						Visitor[15] has been told to exit Car[5]
+						Visitor[15] has exited Car[5]
+						Visitor[16] has been told to exit Car[5]
+						Visitor[16] has exited Car[5]
+						Visitor[17] has been told to exit Car[6]
+						Visitor[17] has exited Car[6]
+						Visitor[18] has been told to exit Car[6]
+						Visitor[18] has exited Car[6]
+						Visitor[19] has been told to exit Car[6]
+						Visitor[19] has exited Car[6]
+						Visitor[20] has been told to exit Car[6]
+						Visitor[20] has exited Car[6]
+						Visitor[21] has been told to exit Car[7]
+						Visitor[21] has exited Car[7]
+						Visitor[22] has been told to exit Car[8]
+						Visitor[22] has exited Car[8]
+						Visitor[23] has been told to exit Car[8]
+						Visitor[23] has exited Car[8]
+						Visitor[24] has been told to exit Car[8]
+						Visitor[24] has exited Car[8]
+						Visitor[25] has been told to exit Car[9]
+						Visitor[25] has exited Car[9]
+						Visitor[26] has been told to exit Car[9]
+						Visitor[26] has exited Car[9]
+						Visitor[27] has been told to exit Car[9]
+						Visitor[27] has exited Car[9]
+						Visitor[28] has been told to exit Car[9]
+						Visitor[28] has exited Car[9]
+						Visitor[29] has been told to exit Car[9]
+						Visitor[29] has exited Car[9]
+						Visitor[0] has been told to exit Car[0]
+						Visitor[0] has exited Car[0]
+						Visitor[0] is waiting for TicketTaker[0]
+						Visitor[1] has been told to exit Car[0]
+						Visitor[1] has exited Car[0]
+						Visitor[1] is waiting for TicketTaker[1]
+						Visitor[2] has been told to exit Car[1]
+						Visitor[2] has exited Car[1]
+						Visitor[2] is waiting for TicketTaker[2]
+						Visitor[3] has been told to exit Car[1]
+						Visitor[3] has exited Car[1]
+						Visitor[4] has been told to exit Car[1]
+						Visitor[4] has exited Car[1]
+						Visitor[5] has been told to exit Car[1]
+						Visitor[5] has exited Car[1]
+						Visitor[6] has been told to exit Car[2]
+						Visitor[6] has exited Car[2]
+						Visitor[7] has been told to exit Car[3]
+						Visitor[7] has exited Car[3]
+						Visitor[8] has been told to exit Car[3]
+						Visitor[8] has exited Car[3]
+						Visitor[9] has been told to exit Car[3]
+						Visitor[9] has exited Car[3]
+						Visitor[10] has been told to exit Car[4]
+						Visitor[10] has exited Car[4]
+						Visitor[11] has been told to exit Car[4]
+						Visitor[11] has exited Car[4]
+						Visitor[12] has been told to exit Car[4]
+						Visitor[12] has exited Car[4]
+						Visitor[13] has been told to exit Car[4]
+						Visitor[13] has exited Car[4]
+						Visitor[14] has been told to exit Car[4]
+						Visitor[14] has exited Car[4]
+						Visitor[15] has been told to exit Car[5]
+						Visitor[15] has exited Car[5]
+						Visitor[16] has been told to exit Car[5]
+						Visitor[16] has exited Car[5]
+						Visitor[17] has been told to exit Car[6]
+						Visitor[17] has exited Car[6]
+						Visitor[18] has been told to exit Car[6]
+						Visitor[18] has exited Car[6]
+						Visitor[19] has been told to exit Car[6]
+						Visitor[19] has exited Car[6]
+						Visitor[20] has been told to exit Car[6]
+						Visitor[20] has exited Car[6]
+						Visitor[21] has been told to exit Car[7]
+						Visitor[21] has exited Car[7]
+						Visitor[22] has been told to exit Car[8]
+						Visitor[22] has exited Car[8]
+						Visitor[23] has been told to exit Car[8]
+						Visitor[23] has exited Car[8]
+						Visitor[24] has been told to exit Car[8]
+						Visitor[24] has exited Car[8]
+						Visitor[25] has been told to exit Car[9]
+						Visitor[25] has exited Car[9]
+						Visitor[26] has been told to exit Car[9]
+						Visitor[26] has exited Car[9]
+						Visitor[27] has been told to exit Car[9]
+						Visitor[27] has exited Car[9]
+						Visitor[28] has been told to exit Car[9]
+						Visitor[28] has exited Car[9]
+						Visitor[29] has been told to exit Car[9]
+						Visitor[29] has exited Car[9]
+						Visitor[0] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[1] has given their ticket to TicketTaker[1]
+						Visitor[2] has given their ticket to TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						Valet[2] has been woken up from the bench
+						Visitor[0] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[1] has given their ticket to TicketTaker[1]
+						Visitor[2] has given their ticket to TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						Valet[2] has been woken up from the bench
+						TicketTaker[0] has received a ticket from Visitor[0]
+						TicketTaker[0] has accepted a ticket from Visitor[0]
+						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
+						TicketTaker[1] has received a ticket from Visitor[1]
+						TicketTaker[2] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[2]
+						TicketTaker[4] has accepted a ticket from Visitor[0]
+						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
+						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
+						TicketTaker[0] has received a ticket from Visitor[0]
+						TicketTaker[0] has accepted a ticket from Visitor[0]
+						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
+						TicketTaker[1] has received a ticket from Visitor[1]
+						TicketTaker[2] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[2]
+						TicketTaker[4] has accepted a ticket from Visitor[0]
+						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
+						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
+						Visitor[0] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
+						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
+						Visitor[1] has entered the Museum
+						Visitor[2] has entered the Museum
+						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
+						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
+						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
+						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
+						Visitor[0] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
+						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
+						Visitor[1] has entered the Museum
+						Visitor[2] has entered the Museum
+						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
+						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
+						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
+						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
+						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
+						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
+						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
+						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
+						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
+						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
+						Visitor[3] is waiting for TicketTaker[0]
+						Valet[0] is parking Car[0]
+						Visitor[4] is waiting for TicketTaker[1]
+						Visitor[5] is waiting for TicketTaker[2]
+						Valet[1] is parking Car[1]
+						Valet[2] is parking Car[2]
+						Visitor[3] is waiting for TicketTaker[0]
+						Valet[0] is parking Car[0]
+						Visitor[4] is waiting for TicketTaker[1]
+						Visitor[5] is waiting for TicketTaker[2]
+						Valet[1] is parking Car[1]
+						Valet[2] is parking Car[2]
+						Visitor[3] has given their ticket to TicketTaker[0]
+						Visitor[4] has given their ticket to TicketTaker[1]
+						Visitor[5] has given their ticket to TicketTaker[2]
+						Visitor[3] has given their ticket to TicketTaker[0]
+						Visitor[4] has given their ticket to TicketTaker[1]
+						Visitor[5] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[3]
+						TicketTaker[3] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[4]
+						TicketTaker[5] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[5]
+						TicketTaker[7] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[3]
+						TicketTaker[3] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[4]
+						TicketTaker[5] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[5]
+						TicketTaker[7] has accepted a ticket from Visitor[0]
+						EVisitor[3] has entered the Museum
+						Visitor[4] has entered the Museum
+						Visitor[5] has entered the Museum
+						Visitor[3] has entered the Museum
+						Visitor[4] has entered the Museum
+						Visitor[5] has entered the Museum
+						Visitor[6] is waiting for TicketTaker[0]
+						Visitor[7] is waiting for TicketTaker[1]
+						Visitor[8] is waiting for TicketTaker[2]
+						Visitor[6] is waiting for TicketTaker[0]
+						Visitor[7] is waiting for TicketTaker[1]
+						Visitor[8] is waiting for TicketTaker[2]
+						Visitor[6] has given their ticket to TicketTaker[0]
+						Visitor[7] has given their ticket to TicketTaker[1]
+						Visitor[8] has given their ticket to TicketTaker[2]
+						Visitor[6] has given their ticket to TicketTaker[0]
+						Visitor[7] has given their ticket to TicketTaker[1]
+						Visitor[8] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[6]
+						TicketTaker[6] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[7]
+						TicketTaker[8] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[8]
+						TicketTaker[10] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[6]
+						TicketTaker[6] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[7]
+						TicketTaker[8] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[8]
+						TicketTaker[10] has accepted a ticket from Visitor[0]
+						EVisitor[6] has entered the Museum
+						Visitor[7] has entered the Museum
+						Visitor[8] has entered the Museum
+						Valet[1] is going to sleep on the bench
+						Visitor[6] has entered the Museum
+						Visitor[7] has entered the Museum
+						Visitor[8] has entered the Museum
+						Valet[1] is going to sleep on the bench
+						Valet[0] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Valet[0] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Visitor[9] is waiting for TicketTaker[0]
+						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
+						Visitor[10] is waiting for TicketTaker[1]
+						Visitor[11] is waiting for TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						ValetManager has detected four (or more cars) waiting to be parked
+						Visitor[9] is waiting for TicketTaker[0]
+						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
+						Visitor[10] is waiting for TicketTaker[1]
+						Visitor[11] is waiting for TicketTaker[2]
+						Valet[1] has been woken up from the bench
+						ValetManager has detected four (or more cars) waiting to be parked
+						Valet[0] has received the keys from LimousineDriver[63] for Car[3]
+						Valet[0] has given LimousineDriver[3] ParkingToken[3] for Car[3]
+						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
+						Valet[2] has been woken up from the bench
+						Valet[0] has received the keys from CarDriver[3] for Car[3]
+						Valet[0] has given CarDriver[3] ParkingToken[3] for Car[3]
+						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
+						Valet[2] has been woken up from the bench
+						Visitor[9] has given their ticket to TicketTaker[0]
+						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
+						Visitor[10] has given their ticket to TicketTaker[1]
+						Visitor[11] has given their ticket to TicketTaker[2]
+						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
+						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
+						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
+						Visitor[9] has given their ticket to TicketTaker[0]
+						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
+						Visitor[10] has given their ticket to TicketTaker[1]
+						Visitor[11] has given their ticket to TicketTaker[2]
+						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
+						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
+						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
+						TicketTaker[0] has received a ticket from Visitor[9]
+						TicketTaker[9] has accepted a ticket from Visitor[0]
+						EValet[3] is parking Car[3]
+						TicketTaker[1] has received a ticket from Visitor[10]
+						TicketTaker[11] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[11]
+						TicketTaker[13] has accepted a ticket from Visitor[0]
+						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
+						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
+						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
+						TicketTaker[0] has received a ticket from Visitor[9]
+						TicketTaker[9] has accepted a ticket from Visitor[0]
+						EValet[3] is parking Car[3]
+						TicketTaker[1] has received a ticket from Visitor[10]
+						TicketTaker[11] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[11]
+						TicketTaker[13] has accepted a ticket from Visitor[0]
+						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
+						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
+						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
+						Visitor[9] has entered the Museum
+						Visitor[10] has entered the Museum
+						Visitor[11] has entered the Museum
+						Valet[4] is parking Car[4]
+						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
+						Visitor[9] has entered the Museum
+						Visitor[10] has entered the Museum
+						Visitor[11] has entered the Museum
+						Valet[4] is parking Car[4]
+						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
+						Valet[5] is parking Car[5]
+						Valet[5] is parking Car[5]
+						Visitor[12] is waiting for TicketTaker[0]
+						Visitor[13] is waiting for TicketTaker[1]
+						Visitor[14] is waiting for TicketTaker[2]
+						Visitor[12] is waiting for TicketTaker[0]
+						Visitor[13] is waiting for TicketTaker[1]
+						Visitor[14] is waiting for TicketTaker[2]
+						Visitor[12] has given their ticket to TicketTaker[0]
+						Visitor[13] has given their ticket to TicketTaker[1]
+						Visitor[14] has given their ticket to TicketTaker[2]
+						Visitor[12] has given their ticket to TicketTaker[0]
+						Visitor[13] has given their ticket to TicketTaker[1]
+						Visitor[14] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[12]
+						TicketTaker[12] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[13]
+						TicketTaker[14] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[14]
+						TicketTaker[16] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[12]
+						TicketTaker[12] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[13]
+						TicketTaker[14] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[14]
+						TicketTaker[16] has accepted a ticket from Visitor[0]
+						EVisitor[12] has entered the Museum
+						Visitor[13] has entered the Museum
+						Visitor[14] has entered the Museum
+						Visitor[12] has entered the Museum
+						Visitor[13] has entered the Museum
+						Visitor[14] has entered the Museum
+						Visitor[15] is waiting for TicketTaker[0]
+						Visitor[16] is waiting for TicketTaker[1]
+						Visitor[17] is waiting for TicketTaker[2]
+						Visitor[15] is waiting for TicketTaker[0]
+						Visitor[16] is waiting for TicketTaker[1]
+						Visitor[17] is waiting for TicketTaker[2]
+						Visitor[15] has given their ticket to TicketTaker[0]
+						Visitor[16] has given their ticket to TicketTaker[1]
+						Visitor[17] has given their ticket to TicketTaker[2]
+						Visitor[15] has given their ticket to TicketTaker[0]
+						Visitor[16] has given their ticket to TicketTaker[1]
+						Visitor[17] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[15]
+						TicketTaker[15] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[16]
+						TicketTaker[17] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[17]
+						TicketTaker[19] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[15]
+						TicketTaker[15] has accepted a ticket from Visitor[0]
+						EValet[0] is going to sleep on the bench
+						TicketTaker[1] has received a ticket from Visitor[16]
+						TicketTaker[17] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[17]
+						TicketTaker[19] has accepted a ticket from Visitor[0]
+						EVisitor[15] has entered the Museum
+						Visitor[16] has entered the Museum
+						Visitor[17] has entered the Museum
+						Visitor[15] has entered the Museum
+						Visitor[16] has entered the Museum
+						Visitor[17] has entered the Museum
+						Valet[0] has been woken up from the bench
+						Valet[1] is going to sleep on the bench
+						Valet[0] has been woken up from the bench
+						Valet[1] is going to sleep on the bench
+						Visitor[18] is waiting for TicketTaker[0]
+						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
+						Visitor[19] is waiting for TicketTaker[1]
+						Visitor[20] is waiting for TicketTaker[2]
+						Visitor[18] is waiting for TicketTaker[0]
+						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
+						Visitor[19] is waiting for TicketTaker[1]
+						Visitor[20] is waiting for TicketTaker[2]
+						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
+						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
+						Valet[1] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
+						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
+						Valet[1] has been woken up from the bench
+						Valet[2] is going to sleep on the bench
+						Visitor[18] has given their ticket to TicketTaker[0]
+						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
+						Visitor[19] has given their ticket to TicketTaker[1]
+						Visitor[20] has given their ticket to TicketTaker[2]
+						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
+						Visitor[18] has given their ticket to TicketTaker[0]
+						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
+						Visitor[19] has given their ticket to TicketTaker[1]
+						Visitor[20] has given their ticket to TicketTaker[2]
+						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
+						TicketTaker[0] has received a ticket from Visitor[18]
+						TicketTaker[18] has accepted a ticket from Visitor[0]
+						EValet[6] is parking Car[6]
+						TicketTaker[1] has received a ticket from Visitor[19]
+						TicketTaker[20] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[20]
+						TicketTaker[22] has accepted a ticket from Visitor[0]
+						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
+						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
+						Valet[2] has been woken up from the bench
+						TicketTaker[0] has received a ticket from Visitor[18]
+						TicketTaker[18] has accepted a ticket from Visitor[0]
+						EValet[6] is parking Car[6]
+						TicketTaker[1] has received a ticket from Visitor[19]
+						TicketTaker[20] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[20]
+						TicketTaker[22] has accepted a ticket from Visitor[0]
+						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
+						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
+						Valet[2] has been woken up from the bench
+						Visitor[18] has entered the Museum
+						Visitor[19] has entered the Museum
+						Visitor[20] has entered the Museum
+						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
+						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
+						Visitor[18] has entered the Museum
+						Visitor[19] has entered the Museum
+						Visitor[20] has entered the Museum
+						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
+						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
+						Valet[7] is parking Car[7]
+						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
+						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
+						Valet[7] is parking Car[7]
+						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
+						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
+						Visitor[21] is waiting for TicketTaker[0]
+						Visitor[22] is waiting for TicketTaker[1]
+						Visitor[23] is waiting for TicketTaker[2]
+						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
+						Visitor[21] is waiting for TicketTaker[0]
+						Visitor[22] is waiting for TicketTaker[1]
+						Visitor[23] is waiting for TicketTaker[2]
+						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
+						Valet[8] is parking Car[8]
+						Valet[8] is parking Car[8]
+						Visitor[21] has given their ticket to TicketTaker[0]
+						Visitor[22] has given their ticket to TicketTaker[1]
+						Visitor[23] has given their ticket to TicketTaker[2]
+						Visitor[21] has given their ticket to TicketTaker[0]
+						Visitor[22] has given their ticket to TicketTaker[1]
+						Visitor[23] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[21]
+						TicketTaker[21] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[22]
+						TicketTaker[23] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[23]
+						TicketTaker[25] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[21]
+						TicketTaker[21] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[22]
+						TicketTaker[23] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[23]
+						TicketTaker[25] has accepted a ticket from Visitor[0]
+						EVisitor[21] has entered the Museum
+						Visitor[22] has entered the Museum
+						Visitor[23] has entered the Museum
+						Visitor[21] has entered the Museum
+						Visitor[22] has entered the Museum
+						Visitor[23] has entered the Museum
+						Visitor[24] is waiting for TicketTaker[0]
+						Visitor[25] is waiting for TicketTaker[1]
+						Visitor[26] is waiting for TicketTaker[2]
+						Visitor[24] is waiting for TicketTaker[0]
+						Visitor[25] is waiting for TicketTaker[1]
+						Visitor[26] is waiting for TicketTaker[2]
+						Visitor[24] has given their ticket to TicketTaker[0]
+						Visitor[25] has given their ticket to TicketTaker[1]
+						Visitor[26] has given their ticket to TicketTaker[2]
+						Visitor[24] has given their ticket to TicketTaker[0]
+						Visitor[25] has given their ticket to TicketTaker[1]
+						Visitor[26] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[24]
+						TicketTaker[24] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[25]
+						TicketTaker[26] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[26]
+						TicketTaker[28] has accepted a ticket from Visitor[0]
+						ETicketTaker[0] has received a ticket from Visitor[24]
+						TicketTaker[24] has accepted a ticket from Visitor[0]
+						ETicketTaker[1] has received a ticket from Visitor[25]
+						TicketTaker[26] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[26]
+						TicketTaker[28] has accepted a ticket from Visitor[0]
+						EVisitor[24] has entered the Museum
+						Visitor[25] has entered the Museum
+						Visitor[26] has entered the Museum
+						Visitor[24] has entered the Museum
+						Visitor[25] has entered the Museum
+						Visitor[26] has entered the Museum
+						Visitor[27] is waiting for TicketTaker[0]
+						Visitor[0] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[28] is waiting for TicketTaker[1]
+						Visitor[1] has left the Museum
+						Visitor[29] is waiting for TicketTaker[2]
+						Visitor[2] has left the Museum
+						Visitor[27] is waiting for TicketTaker[0]
+						Visitor[0] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[28] is waiting for TicketTaker[1]
+						Visitor[1] has left the Museum
+						Visitor[29] is waiting for TicketTaker[2]
+						Visitor[2] has left the Museum
+						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
+						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
+						Visitor[27] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[28] has given their ticket to TicketTaker[1]
+						Visitor[29] has given their ticket to TicketTaker[2]
+						Visitor[27] has given their ticket to TicketTaker[0]
+						Valet[0] has been woken up from the bench
+						Visitor[28] has given their ticket to TicketTaker[1]
+						Visitor[29] has given their ticket to TicketTaker[2]
+						TicketTaker[0] has received a ticket from Visitor[27]
+						TicketTaker[27] has accepted a ticket from Visitor[0]
+						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
+						TicketTaker[1] has received a ticket from Visitor[28]
+						TicketTaker[29] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[29]
+						TicketTaker[31] has accepted a ticket from Visitor[0]
+						EValet[1] is going to sleep on the bench
+						TicketTaker[0] has received a ticket from Visitor[27]
+						TicketTaker[27] has accepted a ticket from Visitor[0]
+						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
+						TicketTaker[1] has received a ticket from Visitor[28]
+						TicketTaker[29] has accepted a ticket from Visitor[0]
+						ETicketTaker[2] has received a ticket from Visitor[29]
+						TicketTaker[31] has accepted a ticket from Visitor[0]
+						EValet[1] is going to sleep on the bench
+						Visitor[27] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
+						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
+						Visitor[28] has entered the Museum
+						Visitor[29] has entered the Museum
+						Visitor[27] has entered the Museum
+						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
+						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
+						Visitor[28] has entered the Museum
+						Visitor[29] has entered the Museum
+						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
+						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
+						Visitor[3] has left the Museum
+						Valet[9] is parking Car[9]
+						Visitor[4] has left the Museum
+						Visitor[5] has left the Museum
+						Valet[2] is going to sleep on the bench
+						Visitor[3] has left the Museum
+						Valet[9] is parking Car[9]
+						Visitor[4] has left the Museum
+						Visitor[5] has left the Museum
+						Valet[2] is going to sleep on the bench
+						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
+						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
+						Valet[1] has been woken up from the bench
+						Valet[1] has been woken up from the bench
+						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
+						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
+						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
+						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
+						Visitor[6] has left the Museum
+						Visitor[7] has left the Museum
+						Visitor[8] has left the Museum
+						Visitor[6] has left the Museum
+						Visitor[7] has left the Museum
+						Visitor[8] has left the Museum
+						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
+						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
+						Valet[2] has been woken up from the bench
+						Valet[2] has been woken up from the bench
+						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
+						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
+						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
+						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
+						Visitor[9] has left the Museum
+						Visitor[10] has left the Museum
+						Visitor[11] has left the Museum
+						Visitor[9] has left the Museum
+						Visitor[10] has left the Museum
+						Visitor[11] has left the Museum
+						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
+						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
+						Visitor[12] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[13] has left the Museum
+						Visitor[14] has left the Museum
+						Visitor[12] has left the Museum
+						Valet[0] is going to sleep on the bench
+						Visitor[13] has left the Museum
+						Visitor[14] has left the Museum
+						ValetManager has detected four (or more cars) waiting to be parked
+						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
+						ValetManager has detected four (or more cars) waiting to be parked
+						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
+						Valet[0] has been woken up from the bench
+						Valet[0] has been woken up from the bench
+						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
+						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
+						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
+						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
+						Valet[1] has given LimousineDriver[1] Car[1]
+						Valet[1] has given LimousineDriver[1] Car[1]
+						Visitor[15] has left the Museum
+						Visitor[16] has left the Museum
+						Visitor[17] has left the Museum
+						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
+						Visitor[15] has left the Museum
+						Visitor[16] has left the Museum
+						Visitor[17] has left the Museum
+						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
+						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
+						Valet[1] has received tip from LimousineDriver[1] for Car[1]
+						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
+						Valet[1] has received tip from LimousineDriver[1] for Car[1]
+						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
+						LimoDriver[1] has told his visitors to get into Car[1]
+						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
+						LimoDriver[1] has told his visitors to get into Car[1]
+						Valet[0] has given LimousineDriver[0] Car[0]
+						Visitor[2] has been told to get into Car[1]
+						Visitor[2] has gotten into Car[1] and is waiting to leave
+						Visitor[3] has been told to get into Car[1]
+						Visitor[3] has gotten into Car[1] and is waiting to leave
+						Visitor[4] has been told to get into Car[1]
+						Visitor[4] has gotten into Car[1] and is waiting to leave
+						Visitor[5] has been told to get into Car[1]
+						Visitor[5] has gotten into Car[1] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						Valet[0] has given LimousineDriver[0] Car[0]
+						Visitor[2] has been told to get into Car[1]
+						Visitor[2] has gotten into Car[1] and is waiting to leave
+						Visitor[3] has been told to get into Car[1]
+						Visitor[3] has gotten into Car[1] and is waiting to leave
+						Visitor[4] has been told to get into Car[1]
+						Visitor[4] has gotten into Car[1] and is waiting to leave
+						Visitor[5] has been told to get into Car[1]
+						Visitor[5] has gotten into Car[1] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
+						LimoDriver[1] has left the Museum in Car[1]
+						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
+						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
+						LimoDriver[1] has left the Museum in Car[1]
+						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
+						Valet[0] has received tip from LimousineDriver[0] for Car[0]
+						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
+						Valet[0] is going to sleep on the bench
+						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
+						Valet[0] has received tip from LimousineDriver[0] for Car[0]
+						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
+						Valet[0] is going to sleep on the bench
+						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
+						Visitor[18] has left the Museum
+						Valet[2] has given LimousineDriver[2] Car[2]
+						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
+						LimoDriver[0] has told his visitors to get into Car[0]
+						Visitor[19] has left the Museum
+						Visitor[20] has left the Museum
+						Visitor[18] has left the Museum
+						Valet[2] has given LimousineDriver[2] Car[2]
+						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
+						LimoDriver[0] has told his visitors to get into Car[0]
+						Visitor[19] has left the Museum
+						Visitor[20] has left the Museum
+						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
+						Visitor[0] has been told to get into Car[0]
+						Visitor[0] has gotten into Car[0] and is waiting to leave
+						Visitor[1] has been told to get into Car[0]
+						Visitor[1] has gotten into Car[0] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
+						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
+						Visitor[0] has been told to get into Car[0]
+						Visitor[0] has gotten into Car[0] and is waiting to leave
+						Visitor[1] has been told to get into Car[0]
+						Visitor[1] has gotten into Car[0] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
+						Valet[2] has received tip from LimousineDriver[2] for Car[2]
+						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
+						Valet[2] is going to sleep on the bench
+						LimoDriver[0] has left the Museum in Car[0]
+						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
+						Valet[2] has received tip from LimousineDriver[2] for Car[2]
+						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
+						Valet[2] is going to sleep on the bench
+						LimoDriver[0] has left the Museum in Car[0]
+						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
+						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
+						LimoDriver[2] has told his visitors to get into Car[2]
+						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
+						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
+						LimoDriver[2] has told his visitors to get into Car[2]
+						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
+						Visitor[6] has been told to get into Car[2]
+						Visitor[6] has gotten into Car[2] and is waiting to leave
+						Valet[2] has been woken up from the bench
+						Visitor[6] has been told to get into Car[2]
+						Visitor[6] has gotten into Car[2] and is waiting to leave
+						Valet[2] has been woken up from the bench
+						LimoDriver[2] has left the Museum in Car[2]
+						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
+						Valet[1] has given LimousineDriver[4] Car[4]
+						LimoDriver[2] has left the Museum in Car[2]
+						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
+						Valet[1] has given LimousineDriver[4] Car[4]
+						Visitor[21] has left the Museum
+						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
+						Visitor[22] has left the Museum
+						Visitor[23] has left the Museum
+						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
+						Visitor[21] has left the Museum
+						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
+						Visitor[22] has left the Museum
+						Visitor[23] has left the Museum
+						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
+						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
+						Valet[1] has received tip from LimousineDriver[4] for Car[4]
+						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
+						Valet[1] has received tip from LimousineDriver[4] for Car[4]
+						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
+						LimoDriver[4] has told his visitors to get into Car[4]
+						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
+						LimoDriver[4] has told his visitors to get into Car[4]
+						Visitor[10] has been told to get into Car[4]
+						Visitor[10] has gotten into Car[4] and is waiting to leave
+						Visitor[11] has been told to get into Car[4]
+						Visitor[11] has gotten into Car[4] and is waiting to leave
+						Visitor[12] has been told to get into Car[4]
+						Visitor[12] has gotten into Car[4] and is waiting to leave
+						Visitor[13] has been told to get into Car[4]
+						Visitor[13] has gotten into Car[4] and is waiting to leave
+						Visitor[14] has been told to get into Car[4]
+						Visitor[14] has gotten into Car[4] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						Visitor[10] has been told to get into Car[4]
+						Visitor[10] has gotten into Car[4] and is waiting to leave
+						Visitor[11] has been told to get into Car[4]
+						Visitor[11] has gotten into Car[4] and is waiting to leave
+						Visitor[12] has been told to get into Car[4]
+						Visitor[12] has gotten into Car[4] and is waiting to leave
+						Visitor[13] has been told to get into Car[4]
+						Visitor[13] has gotten into Car[4] and is waiting to leave
+						Visitor[14] has been told to get into Car[4]
+						Visitor[14] has gotten into Car[4] and is waiting to leave
+						Valet[1] has been woken up from the bench
+						Valet[0] has given LimousineDriver[3] Car[3]
+						LimoDriver[4] has left the Museum in Car[4]
+						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
+						Valet[0] has given LimousineDriver[3] Car[3]
+						LimoDriver[4] has left the Museum in Car[4]
+						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
+						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
+						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
+						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
+						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
+						Visitor[24] has left the Museum
+						Valet[0] has received tip from LimousineDriver[3] for Car[3]
+						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
+						Valet[0] is going to sleep on the bench
+						Visitor[25] has left the Museum
+						Visitor[26] has left the Museum
+						Visitor[24] has left the Museum
+						Valet[0] has received tip from LimousineDriver[3] for Car[3]
+						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
+						Valet[0] is going to sleep on the bench
+						Visitor[25] has left the Museum
+						Visitor[26] has left the Museum
+						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
+						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
+						LimoDriver[3] has told his visitors to get into Car[3]
+						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
+						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
+						LimoDriver[3] has told his visitors to get into Car[3]
+						Valet[2] has given LimousineDriver[5] Car[5]
+						Visitor[7] has been told to get into Car[3]
+						Visitor[7] has gotten into Car[3] and is waiting to leave
+						Visitor[8] has been told to get into Car[3]
+						Visitor[8] has gotten into Car[3] and is waiting to leave
+						Visitor[9] has been told to get into Car[3]
+						Visitor[9] has gotten into Car[3] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						Valet[2] has given LimousineDriver[5] Car[5]
+						Visitor[7] has been told to get into Car[3]
+						Visitor[7] has gotten into Car[3] and is waiting to leave
+						Visitor[8] has been told to get into Car[3]
+						Visitor[8] has gotten into Car[3] and is waiting to leave
+						Visitor[9] has been told to get into Car[3]
+						Visitor[9] has gotten into Car[3] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
+						LimoDriver[3] has left the Museum in Car[3]
+						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
+						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
+						LimoDriver[3] has left the Museum in Car[3]
+						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
+						Valet[2] has received tip from LimousineDriver[5] for Car[5]
+						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
+						Valet[2] is going to sleep on the bench
+						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
+						Valet[2] has received tip from LimousineDriver[5] for Car[5]
+						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
+						Valet[2] is going to sleep on the bench
+						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
+						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
+						LimoDriver[5] has told his visitors to get into Car[5]
+						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
+						LimoDriver[5] has told his visitors to get into Car[5]
+						Visitor[27] has left the Museum
+						Visitor[15] has been told to get into Car[5]
+						Visitor[15] has gotten into Car[5] and is waiting to leave
+						Visitor[16] has been told to get into Car[5]
+						Visitor[16] has gotten into Car[5] and is waiting to leave
+						Visitor[28] has left the Museum
+						Visitor[29] has left the Museum
+						Visitor[27] has left the Museum
+						Visitor[15] has been told to get into Car[5]
+						Visitor[15] has gotten into Car[5] and is waiting to leave
+						Visitor[16] has been told to get into Car[5]
+						Visitor[16] has gotten into Car[5] and is waiting to leave
+						Visitor[28] has left the Museum
+						Visitor[29] has left the Museum
+						LimoDriver[5] has left the Museum in Car[5]
+						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
+						LimoDriver[5] has left the Museum in Car[5]
+						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
+						Valet[2] has been woken up from the bench
+						Valet[1] has given LimousineDriver[7] Car[7]
+						Valet[2] has been woken up from the bench
+						Valet[1] has given LimousineDriver[7] Car[7]
+						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
+						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
+						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
+						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
+						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
+						Valet[1] has received tip from LimousineDriver[7] for Car[7]
+						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
+						Valet[1] is going to sleep on the bench
+						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
+						Valet[1] has received tip from LimousineDriver[7] for Car[7]
+						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
+						Valet[1] is going to sleep on the bench
+						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
+						LimoDriver[7] has told his visitors to get into Car[7]
+						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
+						LimoDriver[7] has told his visitors to get into Car[7]
+						Visitor[21] has been told to get into Car[7]
+						Visitor[21] has gotten into Car[7] and is waiting to leave
+						Visitor[21] has been told to get into Car[7]
+						Visitor[21] has gotten into Car[7] and is waiting to leave
+						LimoDriver[7] has left the Museum in Car[7]
+						LimoDriver[7] has left the Museum in Car[7]
+						Valet[0] has given LimousineDriver[6] Car[6]
+						Valet[0] has given LimousineDriver[3] Car[0]
+						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
+						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
+						Valet[0] has received tip from LimousineDriver[6] for Car[6]
+						Valet[0] has returned keys to LimousineDriver[6] for Car[6]
+						Valet[0] is going to sleep on the bench
+						Valet[0] has received tip from LimousineDriver[3] for Car[0]
+						Valet[0] has returned keys to LimousineDriver[3] for Car[0]
+						Valet[0] is going to sleep on the bench
+						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
+						LimoDriver[6] has told his visitors to get into Car[6]
+						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
+						LimoDriver[6] has told his visitors to get into Car[6]
+						Visitor[17] has been told to get into Car[6]
+						Visitor[17] has gotten into Car[6] and is waiting to leave
+						Visitor[18] has been told to get into Car[6]
+						Visitor[18] has gotten into Car[6] and is waiting to leave
+						Visitor[19] has been told to get into Car[6]
+						Visitor[19] has gotten into Car[6] and is waiting to leave
+						Visitor[20] has been told to get into Car[6]
+						Visitor[20] has gotten into Car[6] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						Visitor[17] has been told to get into Car[6]
+						Visitor[17] has gotten into Car[6] and is waiting to leave
+						Visitor[18] has been told to get into Car[6]
+						Visitor[18] has gotten into Car[6] and is waiting to leave
+						Visitor[19] has been told to get into Car[6]
+						Visitor[19] has gotten into Car[6] and is waiting to leave
+						Visitor[20] has been told to get into Car[6]
+						Visitor[20] has gotten into Car[6] and is waiting to leave
+						Valet[0] has been woken up from the bench
+						LimoDriver[6] has left the Museum in Car[6]
+						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
+						LimoDriver[6] has left the Museum in Car[6]
+						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
+						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
+						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
+						Valet[2] has given LimousineDriver[9] Car[9]
+						Valet[2] has given LimousineDriver[9] Car[9]
+						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
+						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
+						Valet[2] has received tip from LimousineDriver[9] for Car[9]
+						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
+						Valet[2] is going to sleep on the bench
+						Valet[2] has received tip from LimousineDriver[9] for Car[9]
+						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
+						Valet[2] is going to sleep on the bench
+						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
+						LimoDriver[9] has told his visitors to get into Car[9]
+						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
+						LimoDriver[9] has told his visitors to get into Car[9]
+						Visitor[25] has been told to get into Car[9]
+						Visitor[25] has gotten into Car[9] and is waiting to leave
+						Visitor[26] has been told to get into Car[9]
+						Visitor[26] has gotten into Car[9] and is waiting to leave
+						Visitor[27] has been told to get into Car[9]
+						Visitor[27] has gotten into Car[9] and is waiting to leave
+						Visitor[28] has been told to get into Car[9]
+						Visitor[28] has gotten into Car[9] and is waiting to leave
+						Visitor[29] has been told to get into Car[9]
+						Visitor[29] has gotten into Car[9] and is waiting to leave
+						Visitor[25] has been told to get into Car[9]
+						Visitor[25] has gotten into Car[9] and is waiting to leave
+						Visitor[26] has been told to get into Car[9]
+						Visitor[26] has gotten into Car[9] and is waiting to leave
+						Visitor[27] has been told to get into Car[9]
+						Visitor[27] has gotten into Car[9] and is waiting to leave
+						Visitor[28] has been told to get into Car[9]
+						Visitor[28] has gotten into Car[9] and is waiting to leave
+						Visitor[29] has been told to get into Car[9]
+						Visitor[29] has gotten into Car[9] and is waiting to leave
+						LimoDriver[9] has left the Museum in Car[9]
+						LimoDriver[9] has left the Museum in Car[9]
+						Valet[0] has given LimousineDriver[8] Car[8]
+						Valet[0] has given LimousineDriver[8] Car[8]
+						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
+						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
+						Valet[0] has received tip from LimousineDriver[8] for Car[8]
+						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
+						Valet[0] is going to sleep on the bench
+						Valet[0] has received tip from LimousineDriver[8] for Car[8]
+						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
+						Valet[0] is going to sleep on the bench
+						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
+						LimoDriver[8] has told his visitors to get into Car[8]
+						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
+						LimoDriver[8] has told his visitors to get into Car[8]
+						Visitor[22] has been told to get into Car[8]
+						Visitor[22] has gotten into Car[8] and is waiting to leave
+						Visitor[23] has been told to get into Car[8]
+						Visitor[23] has gotten into Car[8] and is waiting to leave
+						Visitor[24] has been told to get into Car[8]
+						Visitor[24] has gotten into Car[8] and is waiting to leave
+						Visitor[22] has been told to get into Car[8]
+						Visitor[22] has gotten into Car[8] and is waiting to leave
+						Visitor[23] has been told to get into Car[8]
+						Visitor[23] has gotten into Car[8] and is waiting to leave
+						Visitor[24] has been told to get into Car[8]
+						Visitor[24] has gotten into Car[8] and is waiting to leave
+						LimoDriver[8] has left the Museum in Car[8]
+						LimoDriver[8] has left the Museum in Car[8]
+						No threads ready or runnable, and no pending interrupts.
+						Assuming the program completed.
+						Machine halting!
+						
+						Ticks: total 349327, idle 0, system 86750, user 262577
+						Disk I/O: reads 0, writes 0
+						Console I/O: reads 0, writes 0
+						Paging: faults 0
+						Network I/O: packets received 0, sent 0
+						
+						Cleaning up...
+
+
+
+
+VI. Discussion
+
+	Experiment 
+	expectation:
+					We expect that the system calls will work properly, of
+					course. The stress test - running two museums - should
+					also work in the sense that two museums running concurrently
+					should not interfere with each other, cause errors, or 
+					otherwise behave differently than a single museum running
+					within the operating system. Of course there will be
+					differences in the program, but these should not be apparent
+					to the user. 
+					
+	Experiment
+	result:			The museum simulation works very well, especially in a 
+					uniprogrammed environment. We saw no issues running the 
+					converted museum code as a single process. We did see some
+					problems with running the museum in a multiprogrammed 
+					environment. Running two museums concurrently revealed some 
+					flaws within our design.
+	
+	Explanation:		We first dealt with a simple problem - not enough physical
+					pages! After increasing numPhysPages sufficiently, we 
+					discovered that the index variable for the lock table was a 
+					global in exception.cc - bad news! After changing that, 
+					and fixing some problems with the indexes that were given to
+					each museum function (Visitor(), CarDriver(), etc.), we 
+					realized that there are some existing race conditions in the
+					museum. These race conditions are rare enough that they
+					don't show up in our tests in a uniprogrammed environment,
+					but the additional context switching that results from a 
+					multiprogrammed environment is enough to show that these 
+					race conditions can occasionally rear their ugly heads. We
+					estimate that the race conditions appear in 10% of our
+					multiprogrammed tests. 
+					
+
+VII. Miscellaneous
+
+	We wrote bash scripts to do most of the conversion from C++ to C code using
+	the syscalls, though our knowledge of scripting is quite limited. For this
+	reason, the museum code is badly formatted (not indented, multiple
+	statements on one line, etc.). We apologize for the lack of readability 
+	and are willing to provide the scripts we used if necessary.

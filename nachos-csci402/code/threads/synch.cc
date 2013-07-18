@@ -134,6 +134,7 @@ void Lock::Acquire()
 	{
 		free = false;
 		ownerThread = currentThread;
+		//printf("Acquired by %i\n",currentThread->space);
 	}
 	else // if I'm not the owner and the lock is not free 		   
    	{
@@ -151,13 +152,14 @@ void Lock::Release()
 	IntStatus oldLevel = interrupt->SetLevel(IntOff);	// disable interrupts
 	if(!isHeldByCurrentThread()) // if I'm not the lock owner
 	{    
-	    printf("Thread %s does not own the lock it is attempting to release.\n", currentThread->getName());
+	    printf("Thread %s does not own the lock %s it is attempting to release.\n", currentThread->getName(), getName());
 	    (void) interrupt->SetLevel(oldLevel);	// re-enable interrupts
 	    return;
 	}
 	
 	if(!queue->IsEmpty()) // if I'm the owner and there are threads waiting for the lock
 	{
+		//printf("Released by %i\n",currentThread->space);
 		Thread *thread = (Thread *)queue->Remove();
     	if (thread != NULL)	   // make thread ready, consuming the V immediately
 		{
@@ -168,6 +170,7 @@ void Lock::Release()
 	
 	else // if I'm the owner and there are no threads waiting for the lock		   
    	{
+   		//	printf("Released by %i\n",currentThread->space);
    		free = true; // make lock available
    		ownerThread = NULL; // clear lock ownership
     }

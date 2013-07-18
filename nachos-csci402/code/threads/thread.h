@@ -106,6 +106,7 @@ class Thread {
     int* getStackTop() { return stackTop; }
 	int* getStackBottom() { return stack; }    
 	int id; //added this
+	int mailbox;
 
   private:
     // some of the private data for this class is listed above

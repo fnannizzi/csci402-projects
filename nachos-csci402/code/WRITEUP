@@ -1,2777 +1,1414 @@
-Title: Writeup for Project 2, Summer 2013
-
-Date: 6/23/13
-
-Group Number 7: Name 				Email				Student ID
-
-				Francesca Nannizzi 	nannizzi@usc.edu		6330648898
-				
-				Merrick Bautista 	mlbautis@usc.edu		1134757772
-
-
-I. Requirements
-
-	This assignment requires the students to implement system calls to handle
-	multithreaded user programs. Additionally, the system calls should hande
-	multiprogramming by allowing multiple processes (up to a determined maximum)
-	to run concurrently. The system calls that were required were Exec, Fork,
-	Yield, Exit, CreateLock, DestroyLock, CreateCondition, DestroyCondition,
-	Acquire, Release, Wait, Signal, Broadcast, and a replacement for printf
-	(ours is Printx). These system calls must allow multithreaded user programs
-	to execute, but prevent them from accessing kernel data directly or
-	otherwise threatening the security of the operating system. 
+Title: Writeup for Project 3, Summer 2013
+Date: 07/17/13
+Group Num 7: 	Name					Email				Student ID
+				Merrick Bautista		mlbautis@usc.edu		1134757772
+				Francesca Nannizzi	nannizzi@usc.edu		6330648898
+				Sonia Yang			soniayan@usc.edu		1576346062
+		
+		
+Quick guide to running our tests:
+	Most tests will be run alongside the server. The exceptions are the exec
+	and fork tests, which don't need the server. These tests can be run with
+	any inputs to random seed, while the other tests should not be run with a
+	random seed. 
 	
-	Secondly, the assignment requires conversion of the previous project's
-	museum code (which ran as part of the operating system, using C++) to a user
-	program. This involves eliminating all calls to the functions replaced by
-	our system calls, print statements using printf, and C++ code. The museum
-	is to run consistently as a multithreaded user program, as well as run
-	alongside a second museum process as a stress test of both multithreading
-	and multiprogramming.
-
+	To choose a page replacement policy, use the option -P {FIFO|RAND}. If you 
+	do not specify, FIFO is the default policy. It is important to put the
+	-P {FIFO|RAND} option before the -x {test_path} option.
+	
+	Exec:
+		From network, run nachos -x ../test/exec
+	Fork:
+		From network, run nachos -x ../test/fork_test
+		
+	Yield:
+		From network, run nachos -x ../test/yield
+		
+	For tests that are run with the server, open up two terminals. In one, run 
+	nachos -m 0 -SERVER. This starts up the server, which must be running before
+	any test that needs the server can run. In the other terminal, run the 
+	desired test.
+	
+	RUN SERVER: nachos -m 0 -SERVER
+	
+	CreateLock:
+		From network, run nachos -m 1 -x ../test/createlock
+		
+	DestroyLock:
+		From network, run nachos -m 1 -x ../test/destroylock
+	
+	AcquireLock:
+		From network, run nachos -m 1 -x ../test/acquirelock
+		
+	ReleaseLock:
+		From network, run nachos -m 1 -x ../test/releaselock
+		
+	CreateCondition:
+		From network, run nachos -m 1 -x ../test/createcondition
+	
+	DestroyCondition:
+		From network, run nachos -m 1 -x ../test/destroycondition
+		
+	Wait:
+		From network, run nachos -m 1 -x ../test/wait
+	
+	Signal:
+		From network, run nachos -m 1 -x ../test/signal
+		
+	Broadcast:
+		From network, run nachos -m 1 -x ../test/broadcast
+	
+	CreateMV:
+		From network, run nachos -m 1 -x ../test/createmv
+	
+	DestroyMV:
+		From network, run nachos -m 1 -x ../test/destroymv
+		
+	GetMV:
+		From network, run nachos -m 1 -x ../test/getmv
+		
+	SetMV:
+		From network, run nachos -m 1 -x ../test/setMV
+		
+				
+I. Requirements
+		For part 1, we will need to implement a TLB. This TLB will store 
+	pages for quick translation. It needs to be invalidated on context
+	switches. It should also keep track of the dirty and use flags for 
+	each page set by hardware. To test, this we need to run 'matmult' and
+	'sort' with the EXEC syscall and make sure it executes properly. We
+	also need to run two instances of matmult with the EXEC syscall to 
+	ensure the two processes are not interfering with the data of the 
+	other.
+	
+		For part 2, we will implement virtual memory to make it seem we
+	have more memory than we actually have. We will need to evict pages
+	from the IPT and move them onto the disk or our swap file. We will 
+	need to make sure nothing is preloaded and we must keep track of 
+	whether certain pages are in memory, the swap file, the stack, or the
+	executable. We need to evict pages when memory is filled and keep 
+	track of all currently used pages in our inverted page table. We will
+	implement random page replacement and FIFO page replacement. We also
+	will show two programs larger than 32 pages can run to completion.
+	
+		For part 3, we will implement remote procedure calls for locks,
+	condition variables, and monitor variables. For the new MV syscalls,
+	we need to be able to create, destroy, set, and get. These need to be 
+	sent from a 'client' to a 'server'. The server should handle multiple
+	machines. The server will perform the system call and return back to
+	the client.
 
 II. Assumptions
-
-	We make the assumption that no more than five user processes will be run at
-	any given time, as the MAX_PROCESSES defined in userprog/exception.cc is
-	five. Because a bitmap wasn't used to hold the current processes, the 
-	operating system runs five processes only. This means that new process can't
-	run after the fifth process completes because the array is maxed out (spaces
-	in the process table are not reused). We also assume that the user programs
-	will use less than MAX_LOCKS (500) locks and MAX_CONDITIONS (500)
-	conditions in total, as the spaces in the lock table and condition table are
-	not reused and no more than the maximum amount of locks and conditions can 
-	be created. Finally, we assume that the user programs can fit in 
-	numPhysPages (2000) of memory.
-
+		We assumed that there could only be ten mailboxes per machine. 
+		We assumed there could be 500 max locks, 500 CVs, and 100 MVs.
+		We assumed there could be up to 1000 virtual pages and five
+			processes.
+		We assume we only have 32 physical pages of memory.
+		We assume the server will run forever and never terminate.
+		
 III. Design
-
-	This design needs to support multiprogramming so our museum can be run
-	multiple times in parallel by the user.
-	In order to do this, we need to implement system calls like CreateLock,
-	Acquire, etc.
-	In these system calls, we need to protect the data, for processes can
-	disrupt other processes.
-	To protect this data, we will implement locks around all shared data.
-	We also need to ensure multiprogramming is enabled so we need to
-	reconstruct the address space constructor.
-	The address space constructor assumes each virtual page matches up with the
-	same physical page.
-	However, we needed to change this so that each virtual page gets mapped to
-	any available physical page.
-	This will enable us to run up to five processes in our code.
-	We will have to also ensure the data is being read from the appropriate
-	places as well.
-	Locks and CVs need to be specific to each process, so we need to ensure
-	that each process only grabs the locks and CVs they use.
-	We had to make some adjustments since we were using C programming.
-	We created our own Printx statement to show output.
-	We also had to make a little random function to simulate randomness.
-	We had to find a new way to create the parameters we previously passed our
-	threads, so we generated that in each thread as it was forked.
-	Our museum is designed using while wait loops so that each thread can be
-	signalled when necessary.
-	We followed the documentation to implement all system calls.
-	We added some extra parameters such as a name to fork, but soon found out
-	that it would not be needed.
-	We used structs to hold all the information we needed about locks, CVs, etc.
-
-
+	Part 1 & 2
+		On a page fault, we will read from the Bad Virtual Address Reg
+	and determine the page number. With this, we will need to see if the
+	vpn is in the inverted page table. For our inverted page table, we
+	implement an actual IPT class with methods such as 
+	searchForEntry(vpn,processID) or chooseEvictonPageRandom(). If the
+	vpn is in the IPT, then we can populate the TLB which will be
+	described later. If the vpn is not in the TLB, then it needs to 
+	either go into an empty slot in the IPT or evict a current page from 
+	the IPT. If we need to evict a page, we can either do it randomly or
+	with FIFO. With the random implementation, we simply choose a random
+	page of the 32 slots in the IPT. However, if that page is currently 
+	in use, then we choose another random page until we get
+	one not in use. For FIFO, we implement a queue per process that
+	stores the appends the vpn coming in. It will the pop the front of
+	the queue to evict. Once we determine which page to evict, then we 
+	need to see if this page is in the TLB. If it is in the TLB, we need
+	to propagate the dirty bit from the TLB to the IPT. Then we need to
+	set the valid bit in the TLB as false. If the now propagated dirty 
+	bit in the IPT is in fact dirty, we need to copy ths to the swap
+	file. We will use a bitmap to search for the empty entry, and then
+	store this in a 2 dimensional array that stores offsets, with the 1st
+	index indicating the processID and the 2nd index indicating the vpn.
+	Then we write to the swapFile at this same location. We also need
+	to note that the page is now in the swapFile. To do this, we change
+	another 2 dimensional array with the same indices to show the
+	current location is now the swap file. Once this is all done, we 
+	look at the virtual address we are bringing in. If it is in the
+	executable, we read from there. Otherwise, we need to read from the
+	swap file according to the offset calculated when it was evicted.
+	Since this page has just been read by the current process, it is 
+	valid and not dirty. We then need to update the ipt with this new
+	page in the location that was just evicted. Now we need to update
+	the TLB. We can also get to this point if there was an empty slot 
+	in the IPT. If the page about to be evicted in the TLB is valid and 
+	is dirty, then we need to propagate the dirty bit into the IPT. We 
+	also need to set the use bit of the page we are about to evict to 
+	FALSE. Then we update the TLB entry with the page from the IPT. Then 
+	set the valid bit to true. Finally we increment the TLB counter and 
+	have sucessfully handled our page fault. We also had to edit our
+	ExceptionHandler to get the pagefault exception. We also had to
+	remove the preloading from the address space constructor.
+	
+	Part 3
+		For Part 3, we needed to implement the server, change the 
+	system calls, and make new system calls for MVs. For the system
+	calls, we needed to basically take out all the code dealing with
+	the original system call. We still validated the name, but after that
+	we simply needed to package everything into a Message and send it to
+	the server. To compile our message, we used a stringstream to copy in
+	the name, request type, and whatever parameters it needed. 
+	We also set the mailHeader and the packetHeader and send the message
+	to the server. After sending it to the server, the server receives
+	the message and begins to decode it. Based off what it decodes,
+	it does the necessary commands that it should whether it be 
+	creating something, or setting an MV. After it does the appropriate
+	code and stores the appropriate data in the table, it sends a reply
+	message, possibly with a return value. With this return value in the
+	message that the system calls on the client side receive, they can
+	return the appropriate value.
+	
 IV. Implementation
-	Files modified: userprog/exception.cc
+	Files Modified: userprog/exception.cc
 					userprog/syscall.h
 					userprog/addrspace.h
 					userprog/addrspace.cc
 					
 					threads/synch.h
 					threads/system.cc
+					threads/system.h
 					
 					machine/machine.h
 					
 					test/Makefile
 					test/start.s
-
-
-	Files added:		test/acquirelock.c
-					test/acquirelock1.c
-					test/acquirelock2.c
-					test/acquirelock3.c
-					test/broadcast.c
-					test/broadcast_destroy.c
-					test/broadcast_non_normative.c
-					test/broadcast_normative.c
-					test/broadcast_right_process.c
-					test/broadcast_wrong_process.c
-					test/createcondition.c
-					test/createcondition_test.c
-					test/createlock.c
-					test/createlock_test.c
-					test/destroycondition.c
-					test/destroycondition_right_process.c
-					test/destroycondition_wrong_process.c
-					test/destroylock.c
-					test/destroylock1.c
-					test/destroylock2.c
-					test/exec.c
-					test/exit.c
-					test/exit_test.c
-					test/fork.c
-					test/museum.c
-					test/printx.c
-					test/releaselock.c
-					test/releaselock1.c
-					test/releaselock2.c
-					test/releaselock3.c
-					test/signal.c
-					test/signal_destroy.c
-					test/signal_non_normative.c
-					test/signal_normative.c
-					test/signal_right_process.c
-					test/signal_wrong_process.c
-					test/wait.c
-					test/wait_destroy.c
-					test/wait_non_normative.c
-					test/wait_normative.c
-					test/wait_right_process.c
-					test/wait_wrong_process.c
-					test/yield.c
-					test/yield_test.c
+					
+					network/Makefile
+					network/nettest.cc
 	
-	Data structures 
-	modified:		threads/synch.h/Condition
-						- added a function isQueueEmpty() so that the condition
-						can be destroyed if no one is waiting on it
-						
+	Files Added:
+					test/fork_test.c
+					test/createmv.c
+					test/destroymv.c
+					test/getmv.c
+					test/setmv.c
 					
-					
-	Data structures 
-	added:			userprog/exception.cc/lockTable
-						- holds MAX_LOCKS number of locks
-					userprog/exception.cc/conditionTable
-						- holds MAX_CONDITIONS number of conditions
-					userprog/exception.cc/processTable
-						- holds MAX_PROCESSES number of processes	
-					userprog/exception.cc/LockX
-						- added a struct to contain Lock data (bool
-						isTobeDeleted,bool isDeleted, Addrspace* processOwner,
-						Lock* lock), used to track locks in the lockTable 
-					userprog/exception.cc/ConditionX
-						- added a struct to contain Condition data (bool
-						isTobeDeleted,bool isDeleted, Addrspace* processOwner,
-						Condition* condition), used to track conditions in the
-						conditionTable
-					userprog/exception.cc/Process
-						- added a struct to contain Process data (int 
-						threadCount, int spaceID, Addrspace* processOwner),
-						used to track processes in the processTable
-					userprog/exception.cc/Lock* forkLock
-						- used to protect the thread count of a process when
-						forking new threads
-					userprog/exception.cc/Lock* execLock
-						- used to protect the process count when creating new
-						processes
-					userprog/exception.cc/Lock* processLock
-						- array of MAX_PROCESSES locks that ensures the
-						threadcount and processOwner data of each process is 
-						only being accessed by one thread within the process at
-						a time. Primarily used within Exit_Syscall(...)
-					userprog/exception.cc/Condition* processCV
-						- array of MAX_PROCESSES conditions that allows the main
-						thread of a process to wait until all its children have
-						exited before cleaning up the address space. The last
-						child thread to exit signals main using this condition.
-					
-	Functions 
-	modified:		userprog/exception.cc/
-						void Fork_Syscall(int, int, int)
-						
-						void Yield_Syscall()
-						
-						void Exec_Syscall(int, int)						
+	Data Structures Added:
+				threads/system.h
+					typedef struct Message {
+						char* name;
+						char* request;
+						int index, index2, index3;
+					};
 
-						int Exit_Syscall(int)
-						
-						void ExceptionHandler(ExceptionType which)
-						
-					userprog/addrspace.cc/
-						AddrSpace::AddrSpace(OpenFile*)
+					enum PageReplacementPolicy { FIFO, RAND };
+				
+					class IPTTranslationEntry: public TranslationEntry {
+						public:
+							int processID;	
+					};
+					class InvertedPageTable {
+						public:
+							IPTTranslationEntry* table;
+							List * queue;
+							InvertedPageTable();					
+							~InvertedPageTable();					
+							void print();							
+							int searchForEntry(int, int);			
+							int searchForEmptyEntry();				
+							void updateEntry(int, int, int, bool);	
+							int chooseEvictionPageLRU();			
+							int chooseEvictionPageRandom();			
+					};
+					
+					PageReplacementPolicy pageReplacementPolicy; 
+					InvertedPageTable *ipt; 
+					Lock* iptLock;		
+					OpenFile* swapFile;
+					BitMap* swapFileMap;	
+					
+				userprog/addrspace.h
+					enum PageType 		{ CODE, DATA, STACK };
+					enum PageLocation 	{ SWAP_FILE, EXECUTABLE };
+					
+					class PTTranslationEntry: public TranslationEntry {
+						public:
+							PageType pageType;
+							PageLocation pageLocation;
+		
+							void print(int);
+							void setExecutableByteOffset(int offset);
+							int getExecutableByteOffset();
+							void setSwapByteOffset(int offset);
+							int getSwapByteOffset();
 	
-	Functions
-	added:			userprog/exception.cc/
-						void Kernel_Thread(int)
-						
-						void Exec_Thread(int)
-						
-						void deleteStack()
-						
-						int Acquire_Syscall(int)
-						
-						int Release_Syscall(int)
-						
-						int Wait_Syscall(int, int)
-						
-						int Signal_Syscall(int, int)
-						
-						int Broadcast_Syscall(int, int)
-						
-						int CreateLock_Syscall(unsigned int, int)
-						
-						int DestroyLock_Syscall(int)
-						
-						int CreateCondition_Syscall(unsigned int, int)
-						
-						int DestroyCondition_Syscall(int)
-						
-						void Printx_Syscall(unsigned int, int, int)
-						
-					userprog/addrspace.cc/
-						int AddrSpace::MakeNewPT()	
+						private:
+							unsigned int executableByteOffset;	
+							unsigned int swapByteOffset;	
+					};
 					
-					threads/synch.h/
-						bool Condition::isQueueEmpty()
+				network/nettest.cc
+					typedef struct ThreadID {
+						int machineID, threadID;
+						bool equals(int n) const;
+						bool equals(int m, int t) const;
+						void setIDs(int n); 
+						void setIDs(int m, int t);
+					};
 
+					enum ServerLockState { AVAILABLE, BUSY };
+
+					typedef struct ServerLock {
+						char* name;
+						ServerLockState state;
+						ThreadID* owner;
+						List* queue;
+						bool isToBeDeleted, isDeleted;
+					};
+
+					typedef struct ServerCondition {
+						char* name;
+						int lockIndex;
+						List* queue;
+						bool isToBeDeleted, isDeleted;	
+					};
+
+					typedef struct MonitorVariable {
+						char* name;
+						int* array, arraySize;
+						bool isToBeDeleted, isDeleted;
+					};
+		Data structures modified:
+				threads/thread.h
+					class Thread {
+						int mailbox;
+					}
+					- Used to store the mailbox which this thread accesses when
+					receiving messages from the post office
+					
+		Functions added:
+				threads/system.h
+					int nextTLB;				
+					void PrintTLB();			
+					void InvalidateAllTLB();	
+					int SearchForTLBEntry(int vpn);
+					void UpdateTLBEntry(int index, int paddr, int vaddr, bool 											dirtyBit, bool useBit, bool readOnlyBit, 											bool validBit);	
+					char* msgPrepare(Message* msg);
+					Message* decodeMessage(char* buf);
+				
+				userprog/exception.cc
+					void HandlePageFault();
+					
+					int CreateMV_Syscall(unsigned int vaddr, int len, int len2);
+					int DestroyMV_Syscall(int mv);
+					int GetMV_Syscall(int mv, int index);
+					int SetMV_Syscall(int mv, int index, int value);
+					
+				network/nettest.cc
+					Message* decodeMessage(char* buf);
+					bool sendMessage(PacketHeader outPktHdr, MailHeader 										 outMailHdr, Message* response);
+					bool sendErrorMessage(PacketHeader outPktHdr, MailHeader 											  outMailHdr, Message* response);
+					bool sendSuccessMessage(PacketHeader outPktHdr, MailHeader 												outMailHdr, Message* response);
+					
+					void constructServerLock(int index, char* buf);
+					int findLockByName(char* name);
+
+					void constructServerCondition(int index, char* buf);
+					int findConditionByName(char* name);
+					
+					void constructMonitorVariable(int index, int arraySize, 													  char* buf);
+					int findMonitorVariableByName(char* name);
+					
+					void Server();
+			
+			Functions modified:
+				userprog/exception.cc
+					void ExceptionHandler(ExceptionType which);
+	
+	
 V. Testing
-
-	Syscall 
-	testing:		AcquireLock_Syscall
-					- Tests the AcquireLock_Syscall by attempting to acquire
-					locks using various incorrect indexes, which fails. Then the
-					test creates a new lock and acquires it successfully. The 
-					test attempts to acquire the lock again and fails. Then, 
-					a non-owner process attempts to acquire the lock and fails.
-					Finally, a third test creates and destroys a lock, then
-					attempts to acquire it, and fails.
-					
-					Execute: From userprog, run nachos -x ../test/acquirelock
-					
-					Test output:
-						
-						Test is attempting to acquire lock at index -1
-						Invalid Lock requested. Must be between 0 and 500
-						Lock not acquired
-
-						Test is attempting to acquire lock at index 200
-						Lock was never initialized
-						Lock not acquired
-
-						Test is attempting to acquire null lock at index 0
-						Lock was never initialized
-						Lock not acquired
-
-						Test is creating lock at index 0
-						Lock created successfully at index 0
-
-						Test is acquiring lock at index 0
-						Lock acquired successfully from index 0
-
-						Test is attempting to reacquire lock at index 0
-						Thread main already owns the lock it is attempting to
-						acquire.
-						Lock not acquired
-
-						Test1 is creating lock at index 1
-						Lock created successfully at index 1
-
-						Test2 is attempting to acquire lock at index 1
-						Lock is not owned by current processa
-						Lock not acquired
-
-						Test3.1 is creating lock at index 2
-						Lock created successfully at index 2
-
-						Test3.2 is destroying lock at index 2
-						Lock at index 2 in the table is set to be destroyed
-						Lock at index 2 successfully set to be destroyed
-
-						Test3.2 is attempting to acquire lock at index 2
-						Lock has already been set to be deleted
-						Lock has now been deleted
-						Lock not acquired
-
-						Test3.2 is attempting to acquire lock at index 2
-						Lock has already been deleted
-						Lock not acquired
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-
-						Ticks: total 1259, idle 0, system 690, user 569
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-
-						Cleaning up...
-
-					
-				Broadcast_Syscall
-					- Tests the Broadcast_Syscall by attempting to broadcast on
-					a CV belonging to another process, which accordingly fails
-					(wrong process test). Then tests various invalid indexes for
-					both the lock and condition, which fails until given a
-					correct index (non-normative test). Then tests broadcasting
-					on a destroyed lock and CV, which fails (destroyed test).
-					Then begins a test with two waiting threads and one
-					broadcaster, which proceeds normally and succeeds 
-					(normative test).
-					
-					Execute: From userprog, run nachos -x ../test/broadcast
-					
-					Test output:
-					
-						----------------------------------
-						Beginning wrong process test
-						----------------------------------
-						Created lock and CV in owner process
-						Non-owner process is broadcasting on a CV belonging to
-						another process
-						NCV at index 0 not owned by current process, cannot
-						allow threadexec to broadcast 
-						Non-owner not able to broadcast on the CV
-						Non-owner process created a new CV
-						NNon-owner process is broadcasting on a lock belonging
-						to another process
-						Lock at index 0 not owned by current process, cannot
-						allow threadexec to broadcast 
-						Non-owner not able to broadcast on the CV
-						----------------------------------
-						Beginning non-normative test
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 2 is waiting on a signal
-						Thread 3 is broadcasting before acquiring the lock
-						TLock at index 1 not owned by current thread, cannot
-						allow  to broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is acquiring the lock
-						Thread 3 is broadcasting with an invalid CV index
-						Invalid conditionTable index -1, cannot allow  to
-						broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is broadcasting with an invalid lock index
-						Invalid lockTable index -1, cannot allow  to broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is broadcasting with a null CV index
-						No Condition initialized at index 52, cannot allow  to
-						broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is broadcasting with a null lock index
-						No Lock initialized at index 51, cannot allow  to
-						broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is broadcasting the waiters
-						Thread 3 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						Thread 2 has been signalled
-						Thread 2 is releasing the lock
-						----------------------------------
-						Beginning test on destroyed lock and CV
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 3 is destroying the lock
-						Lock at index 2 in the table is set to be destroyed
-						Thread 3 is broadcasing using a destroyed lock
-						TLock at index 2 marked for deletion, cannot allow  to
-						broadcast 
-						Thread 3 not able to broadcast on the CV
-						Thread 3 is destroying the CV
-						Thread 3 is broadcasting using a destroyed CV
-						CV at index 3 deleted, cannot allow  to signal 
-						Thread 3 not able to broadcast on the CV
-						----------------------------------
-						Beginning normative test
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 2 is waiting on a signal
-						Thread 3 is acquiring the lock
-						Thread 3 is broadcasting
-						Thread 3 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						Thread 2 has been signalled
-						Thread 2 is releasing the lock
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-
-						Ticks: total 92236, idle 0, system 34710, user 57526
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-
-						Cleaning up...
-
-					
-				CreateCondition_Syscall
-					- Tests the CreateCondition_Syscall by creating 
-					MAX_CONDITIONS (500) number of conditions, which succeeds.
-					Then it attempts to create one more condition, which fails
-					because there is no more space in the condition table.
-					
-					Execute: In userprog, run nachos -x ../test/createcondition
-					
-					Test output:		
-					
-						Test is creating 500 CVs to fill up the table
-						CV created successfully at index 00
-						CV created successfully at index 01
-						CV created successfully at index 02
-						CV created successfully at index 03
-						
-						...
-						
-						CV created successfully at index 0496
-						CV created successfully at index 0497
-						CV created successfully at index 0498
-						CV created successfully at index 0499
-						
-						Test is attempting to create one more CV
-						Thread threadexec: Condition not created, 
-						max number of conditions reached 
-						CV not created
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 21324, idle 0, system 240, user 21084
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-						
-					
-				CreateLock_Syscall
-					- Tests the CreateLock_Syscall by creating MAX_LOCKS (500)
-					number of locks, which succeeds. Then it attempts to create
-					one more lock, which fails because there is no more space in
-					the lock table.
-					
-					Execute: From userprog, run nachos -x ../test/createlock
-					
-					Test output:				
-						
-						Test is creating 500 locks to faill up table
-						Lock created successfully at index 00
-						Lock created successfully at index 01
-						Lock created successfully at index 02
-						Lock created successfully at index 03
-						
-						...
-						
-						Lock created successfully at index 0496
-						Lock created successfully at index 0497
-						Lock created successfully at index 0498
-						Lock created successfully at index 0499
-						
-						Test is attempting to create one more lock
-						There are no available spaces to CreateLock
-						Lock not created
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 21322, idle 0, system 240, user 21082
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-						
-				DestroyCondition_Syscall
-					- Tests the DestroyCondition_Syscall by having an owner
-					process create and destroy a CV successfully. The owner
-					process attempts to destroy the CV a second time, which
-					fails. Then a non-owner process attempts to destroy a CV
-					using various invalid indexes, which fails. Finally, the
-					non-	owner process attempts to destroy the CV which is owner
-					by the other process, which fails.
-					
-					Execute: In userprog, run nachos -x ../test/destroycondition
-					
-					Test output:
+	Exec:
+	- Starts two processes, each running the matmult.c test.
+		
+	Test output:
+		
+				Num Pages: 13
+				Num Pages: 55
+				Num Pages: 55
+				Exit value: 0 
+				Exit value: 7220 
+				Exit value: 7220 
+				Machine halting!
 				
-						----------------------------------
-						Beginning destroycondition test
-						----------------------------------
-						Owner process is creating a new CV
-						OOwner process is destroying the CV
-						OOwner process is attempting to destroy the CV again
-						Thread threadexec: Condition at index 0 has already been
-						deleted
-						Owner not able to destroy CV
-						Non-owner process is attempting to destroy a CV using an
-						invalid index
-						NThread threadexec: Invalid index in DestroyCondition.
-						Must be between 0 and 499 
-						Non-owner not able to destroy CV
-						Non-owner process is attempting to destroy a CV using an
-						incorrect index
-						Thread threadexec: Invalid index in DestroyCondition.
-						Must be between 0 and 499 
-						Non-owner not able to destroy CV
-						Non-owner process is attempting to destroy a CV that
-						belongs to another process
-						Thread threadexec: Cannot delete Condition at index 0
-						because it is not owned by current process 
-						Non-owner not able to destroy CV
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 8738, idle 0, system 3380, user 5358
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-				DestroyLock_Syscall
-					- Tests the DestroyLock_Syscall by attempting to destroy a 
-					lock with various invalid indexes, which fails. Then, the
-					test creates and acquires a lock and attempts to destroy it,
-					which fails because a thread should not destroy a lock that
-					it owns. Then the test releases the lock and destroys it 
-					successfully. It attempts to destroy the lock again, which
-					fails. The test creates a second lock, and a second process
-					attempts to destroy it and fails.
-					
-					Execute: From userprog, run nachos -x ../test/destroylock
-					
-					Test output:
+				Ticks: total 5187185, idle 0, system 3782050, user 1405135
+				Disk I/O: reads 0, writes 0
+				Console I/O: reads 0, writes 0
+				Paging: faults 0
+				Network I/O: packets received 0, sent 0
 				
-						Test is attempting to destroy a lock at index -1
-						Invalid Lock requested. Must be between 0 and 500
-						Lock not set to be destroyed
-						
-						Test is attempting to destroy a lock at index 200
-						Lock was never initialized
-						Lock not set to be destroyed
-						
-						Test is attempting to destroy a null lock at index 0
-						Lock was never initialized
-						Lock not set to be destroyed
-						
-						Test is creating a lock at index 0
-						Lock created successfully at index 0
-						
-						Test is acquiring lock at index 0
-						Lock acquired successfully from index 0
-						
-						Test is attempting to destroy previously acquired lock
-						at index 0
-						Lock is owned by current thread so cannot be destroyed
-						Lock not set to be destroyed
-						
-						Test is releasing lock at index 0
-						Lock released successfully from index 0
-						
-						Test is attempting to destroy previously released lock
-						at index 0
-						Lock at index 0 in the table is set to be destroyed
-						Lock at index 0 set to be destroyed
-						
-						Test is attempting to destroy previously destroyed lock
-						at index 0
-						Lock is already set to be deleted
-						Lock not set to be destroyed
-						
-						Test1 is creating lock at index 1
-						Lock created successfully at index 1
-						
-						Test2 is attempting to destroy lock at index 1
-						Lock is not owned by current process
-						Lock not set to be destroyed
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 869, idle 0, system 400, user 469
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-
-				Exec_Syscall
-					- Tests the Exec_Syscall by exec-ing five processes (the
-					fork.c file), which each fork three threads. We can see
-					each thread run.
+				Cleaning up...
 				
-					Execute: From userprog, run nachos -x ../test/exec
-					
-					Test output:
-					
-						Test0
-						Test1
-						Test2
-						Test0
-						Test1
-						Test2
-						Test0
-						Test1
-						Test2
-						Test0
-						Test1
-						Test2
-						Test0
-						Test1
-						Test2
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 18129, idle 0, system 7000, user 11129
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
+	Fork:
+	- Runs a test that forks three threads, which each print a statement. 
+	
+	Test output:
+			Num Pages: 13
+			Num Pages: 16
+			Exit value: 0 
+			Exit value: 0 
+			Test0
+			Exit value: 0 
+			Test1
+			Exit value: 0 
+			Test2
+			Exit value: 0 
+			Machine halting!
 
-					
-				Exit_Syscall
-					- Tests the Exit_Syscall by exec-ing five processes, which
-					each fork five threads. We can see each thread running
-					and exiting.
-				
-					Execute: From userprog, run nachos -x ../test/exit
-					
-					Test output:
-					
-						----------------------------------
-						Beginning exit test 1
-						----------------------------------
-						Thread 1 is running
-						Thread 1 is exiting
-						Thread 2 is running
-						Thread 2 is exiting
-						Thread 3 is running
-						Thread 3 is exiting
-						Thread 4 is running
-						Thread 4 is exiting
-						Thread 5 is running
-						Thread 5 is exiting
-						----------------------------------
-						Beginning exit test 2
-						----------------------------------
-						Thread 1 is running
-						Thread 1 is exiting
-						Thread 2 is running
-						Thread 2 is exiting
-						Thread 3 is running
-						Thread 3 is exiting
-						Thread 4 is running
-						Thread 4 is exiting
-						Thread 5 is running
-						Thread 5 is exiting
-						----------------------------------
-						Beginning exit test 3
-						----------------------------------
-						Thread 1 is running
-						Thread 1 is exiting
-						Thread 2 is running
-						Thread 2 is exiting
-						Thread 3 is running
-						Thread 3 is exiting
-						Thread 4 is running
-						Thread 4 is exiting
-						Thread 5 is running
-						Thread 5 is exiting
-						----------------------------------
-						Beginning exit test 4
-						----------------------------------
-						Thread 1 is running
-						Thread 1 is exiting
-						Thread 2 is running
-						Thread 2 is exiting
-						Thread 3 is running
-						Thread 3 is exiting
-						Thread 4 is running
-						Thread 4 is exiting
-						Thread 5 is running
-						Thread 5 is exiting
-						----------------------------------
-						Beginning exit test 5
-						----------------------------------
-						Thread 1 is running
-						Thread 1 is exiting
-						Thread 2 is running
-						Thread 2 is exiting
-						Thread 3 is running
-						Thread 3 is exiting
-						Thread 4 is running
-						Thread 4 is exiting
-						Thread 5 is running
-						Thread 5 is exiting
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 63497, idle 0, system 24800, user 38697
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-					
-					
-				Fork_Syscall
-					- Fork does not have its own test - instead it's wrapped 
-					inside the test for Exec_Syscall. (see Exec_Syscall)
-					
-				Printx_Syscall
-					- This test just prints a few integers to show that printing
-					is working properly.
-					
-					Execute: From userprog, run nachos -x ../test/printx
-					
-					Test output:
-					
-						Printing is working 151 345 10 24
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 287, idle 0, system 240, user 47
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
+			Ticks: total 4624, idle 0, system 2360, user 2264
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 0, sent 0
 
-				
-				ReleaseLock_Syscall
-					- Tests the ReleaseLock_Syscall by attempting to release a
-					lock using various invalid indexes, which fails. Then it
-					creates a lock, and attempts to release without acquiring,
-					which fails. The test acquires the lock successfully, then
-					releases it successfully. It attempts to release the lock
-					a second time, which fails. A second test creates a new
-					lock, and a third test attempts to acquire it but fails
-					because the lock belongs to a different process. A fourth
-					test creates and acquires two locks, then creates a
-					condition and successfully waits on it. A second thread of
-					the fourth process acquires the remaining lock, destroys the
-					two previous locks, signals with the last lock, releases
-					the lock, and shows that locks are successfully deleted.
-				
-					Execute: From userprog, run nachos -x ../test/releaselock
-					
-					Test output:
-						
-						Test is attempting to release a lock at index -1
-						Invalid Lock requested. Must be between 0 and 500
-						Lock not released
-						
-						Test is attempting to release a lock at index 200
-						Lock was never initialized
-						Lock not released
-						
-						Test is attempting to release a null lock at index 0
-						Lock was never initialized
-						Lock not released
-						
-						Test is creating a lock at index 0
-						Lock created successfully at index 0
-						
-						Test is attempting to release lock at index 0 without
-						acquiring
-						Thread main does not own the lock it is attempting to
-						release
-						Lock not released
-						
-						Test is acquiring lock at index 0
-						Lock acquired successfully from index 0
-						
-						Test is releasing lock at index 0
-						Lock at index 0 released successfully
-						
-						Test is attempting to release previously released lock
-						at index 0
-						Thread main does not own the lock it is attempting to
-						release
-						Lock not released
-						
-						Test1 is creating lock at index 1
-						Lock created successfully at index 1
-						
-						Test2 is attempting to release lock at index 1
-						Lock is not owned by current process
-						Lock not released
-						
-						Test4.1 is creating lock at index 2
-						Lock created successfully at index 2
-						
-						Test4.1 is creating lock at index 3
-						Lock created successfully at index 3
-						
-						Test4.1 is acquiring lock at index 2
-						Lock acquired successfully from index 2
-						
-						Test4.1 is acquiring lock at index 3
-						Lock acquired successfully from index 3
-						
-						Test4.1 is creating CV at index 0
-						CV created successfully at index 0
-						
-						Test4.1 is waiting with CV 0 and Lock 3
-						
-						Test4.2 is acquiring lock at index 3
-						Lock acquired successfully from index 3
-						
-						Test4.2 is destroying lock at index 2
-						Lock at index 2 in the table is set to be destroyed
-						Lock at index 2 successfully set to be destroyed
-						
-						Test4.2 is signaling with CV 0 and Lock 3
-						CV is successfully signaling
-						
-						Test4.2 is releasing lock at index 3
-						Lock at index 3 released successfully
-						CV is successfully waiting
-						
-						Test4.1 is releasing lock at index 3
-						Lock at index 3 released successfully
-						
-						Test4.1 is releasing lock at index 2
-						Lock will now be deleted
-						Lock has been deleted
-						Lock at index 2 released successfully
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 1752, idle 0, system 780, user 972
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-
-				Signal_Syscall
-					- Tests the Signal_Syscall by attempting to signal on
-					a CV belonging to another process, which accordingly fails
-					(wrong process test). Then tests various invalid indexes for
-					both the lock and condition, which fails until given a
-					correct index (non-normative test). Then tests signalling
-					on a destroyed lock and CV, which fails (destroyed test).
-					Then begins a test with one waiting thread and one
-					signaller, which proceeds normally and succeeds (normative 
-					test).
-					
-					Execute: From userprog, run nachos -x ../test/signal
-					
-					Test output:
-					
-						----------------------------------
-						Beginning wrong process test
-						----------------------------------
-						Created lock and CV in owner process
-						Non-owner process is signalling on a CV belonging to
-						another process
-						CV at index 0 not owned by current process, cannot allow
-						threadexec to signal 
-						Non-owner not able to signal on the CV
-						NNon-owner process created a new CV
-						NNon-owner process is signalling on a lock belonging to
-						another process
-						Lock at index 0 not owned by current process, cannot
-						allow threadexec to signal 
-						Non-owner not able to signal on the CV
-						N----------------------------------
-						Beginning non-normative test
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is signalling the waiter before acquiring the
-						lock
-						Lock at index 1 not owned by current thread, cannot
-						allow  to signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is acquiring the lock
-						Thread 2 is signalling the waiter with an invalid CV
-						index
-						TInvalid conditionTable index -1, cannot allow  to
-						signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is signalling the waiter with an invalid lock
-						index
-						Invalid lockTable index -1, cannot allow  to signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is signalling the waiter with a null CV index
-						TNo Condition initialized at index 52, cannot allow  to
-						signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is signalling the waiter with a null lock index
-						No Lock initialized at index 51, cannot allow  to
-						signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is signalling the waiter
-						Thread 2 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						----------------------------------
-						Beginning test on destroyed lock and CV
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is destroying the lock
-						Lock at index 2 in the table is set to be destroyed
-						Thread 2 is signalling the waiter using a destroyed lock
-						Lock at index 2 not owned by current thread, cannot
-						allow  to signal 
-						Thread 2 not able to signal on the CV
-						Thread 2 is destroying the CV
-						Thread 2 is signalling the waiter using a destroyed CV
-						lCV at index 3 deleted, cannot allow  to signal 
-						Thread 2 not able to signal on the CV
-						----------------------------------
-						Beginning normative test
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 2 is signalling the waiter
-						Thread 2 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 51196, idle 0, system 19410, user 31786
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-					
-				Wait_Syscall
-					- Tests the Wait_Syscall by attempting to wait on
-					a CV belonging to another process, which accordingly fails
-					(wrong process test). Then tests various invalid indexes for
-					both the lock and condition, which fails until given a
-					correct index (non-normative test). Then tests waiting
-					on a destroyed lock and CV, which fails (destroyed test).
-					Then begins a test with one waiting thread and one
-					signaller, which proceeds normally and succeeds (normative 
-					test)
-					.
-					Execute: From userprog, run nachos -x ../test/wait
-					
-					Test output:
-						----------------------------------
-						Beginning wrong process test
-						----------------------------------
-						Created lock and CV in owner process
-						Non-owner process is waiting on a CV belonging to
-						another process
-						CV at index 0 not owned by current process, cannot allow
-						threadexec to wait 
-						Non-owner not able to wait on the CV
-						Non-owner process created a new CV
-						NNon-owner process is waiting on a lock belonging to
-						another process
-						Lock at index 0 not owned by current process, cannot
-						allow threadexec to wait 
-						Non-owner not able to wait on the CV
-						----------------------------------
-						Beginning non-normative test
-						----------------------------------
-						Thread 1 is waiting before acquiring the lock
-						Lock at index 1 not owned by current thread, cannot
-						allow wait_non_normative to wait 
-						Thread 1 not able to wait on the CV
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting with an invalid CV index
-						Invalid conditionTable index -1, cannot allow
-						wait_non_normative to wait 
-						Thread 1 not able to wait on the CV
-						Thread 1 is waiting with an invalid lock index
-						TInvalid lockTable index -1, cannot allow
-						wait_non_normative to wait 
-						Thread 1 not able to wait on the CV
-						Thread 1 is waiting with a null CV index
-						No Condition initialized at index 52, cannot allow
-						wait_non_normative to wait 
-						Thread 1 not able to wait on the CV
-						Thread 2 is waiting with a null lock index
-						TNo Lock initialized at index 51, cannot allow
-						wait_non_normative to wait 
-						Thread 1 not able to wait on the CV
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 2 is signalling the waiter
-						Thread 2 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						----------------------------------
-						Beginning test on destroyed lock and CV
-						----------------------------------
-						Thread 1 is destroying the lock
-						Lock at index 2 in the table is set to be destroyed
-						Thread 1 is waiting on a CV using a destroyed lock
-						TLock at index 2 marked for deletion, cannot allow
-						wait_destroy to wait 
-						Thread 1 not able to wait on the CV
-						Thread 1 is destroying the CV
-						Thread 1 is waiting on a destroyed CV
-						CV at index 3 marked for deletion, cannot allow
-						wait_destroy to wait 
-						Thread 1 not able to wait on the CV
-						----------------------------------
-						Beginning normative test
-						----------------------------------
-						Thread 1 is acquiring the lock
-						Thread 1 is waiting on a signal
-						Thread 2 is acquiring the lock
-						Thread 2 is signalling the waiter
-						Thread 2 is releasing the lock
-						Thread 1 has been signalled
-						Thread 1 is releasing the lock
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 67251, idle 0, system 25320, user 41931
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-									
-					
-				Yield_Syscall
-					- Tests the Yield_Syscall by calling it 100 times in a row.
-					The output prints each time the thread is ready to run.
+			Cleaning up...
 			
-					Execute: From userprog, run nachos -x ../test/yield
-					
-					Test output:
-					
-						----------------------------------
-						Beginning yield test
-						----------------------------------
-						Yield: 0
-						Yield: 1
-						
-						...
-						
-						Yield: 98
-						Yield: 99
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
-						
-						Ticks: total 5111, idle 0, system 1240, user 3871
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
-
-
-	Museum 
-	simulation:	
+	Yield:
+	- Tests the Yield_Syscall by calling it 100 times in a row. The output
+	prints each time the thread is ready to run.
 			
-				Uniprogramming
-					- Tests the museum in a multithreaded, uniprogrammed
-					environment by exec-ing a single instance of the museum.
-					
-					Execute: From userprog, run nachos -x ../test/uniprogrammed_museum.c
-					
-					Test output: 
-					
-						The Museum of Natural History Parking Simulation
-							1. System Test
-							2. Limos Park First, Then Cars Test
-							3. No Valet, No Parking Test
-							4. Ticket Taker Test
-							5. Drivers Leave Properly Test
-							6. Valet Manager Test - Sending Valet to Back Room
-							7. Valet Manager Test - Waking Up Valet From Back Room
-						Please enter one of the options above: Here
-						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
-						Number of CarDrivers = [0]
-						Number of ParkingValets = [3]
-						Number of Visitors = [30]
-						Number of TicketTakers = [3]
-						Number of Cars = [10]
-						Valet[0] is going to sleep on the bench
-						Valet[1] is going to sleep on the bench
-						Valet[2] is going to sleep on the bench
-						LimoDriver[0] has parked Car[0] at the Museum
-						LimoDriver[0] has told his visitors to leave Car[0]
-						LimoDriver[1] has parked Car[1] at the Museum
-						LimoDriver[1] has told his visitors to leave Car[1]
-						LimoDriver[2] has parked Car[2] at the Museum
-						LimoDriver[2] has told his visitors to leave Car[2]
-						LimoDriver[3] has parked Car[3] at the Museum
-						LimoDriver[3] has told his visitors to leave Car[3]
-						LimoDriver[4] has parked Car[4] at the Museum
-						LimoDriver[4] has told his visitors to leave Car[4]
-						LimoDriver[5] has parked Car[5] at the Museum
-						LimoDriver[5] has told his visitors to leave Car[5]
-						LimoDriver[6] has parked Car[6] at the Museum
-						LimoDriver[6] has told his visitors to leave Car[6]
-						LimoDriver[7] has parked Car[7] at the Museum
-						LimoDriver[7] has told his visitors to leave Car[7]
-						LimoDriver[8] has parked Car[8] at the Museum
-						LimoDriver[8] has told his visitors to leave Car[8]
-						LimoDriver[9] has parked Car[9] at the Museum
-						LimoDriver[9] has told his visitors to leave Car[9]
-						Visitor[0] has been told to exit Car[0]
-						Visitor[0] has exited Car[0]
-						Visitor[0] is waiting for TicketTaker[0]
-						Visitor[1] has been told to exit Car[0]
-						Visitor[1] has exited Car[0]
-						Visitor[1] is waiting for TicketTaker[1]
-						Visitor[2] has been told to exit Car[1]
-						Visitor[2] has exited Car[1]
-						Visitor[2] is waiting for TicketTaker[2]
-						Visitor[3] has been told to exit Car[1]
-						Visitor[3] has exited Car[1]
-						Visitor[4] has been told to exit Car[1]
-						Visitor[4] has exited Car[1]
-						Visitor[5] has been told to exit Car[1]
-						Visitor[5] has exited Car[1]
-						Visitor[6] has been told to exit Car[2]
-						Visitor[6] has exited Car[2]
-						Visitor[7] has been told to exit Car[3]
-						Visitor[7] has exited Car[3]
-						Visitor[8] has been told to exit Car[3]
-						Visitor[8] has exited Car[3]
-						Visitor[9] has been told to exit Car[3]
-						Visitor[9] has exited Car[3]
-						Visitor[10] has been told to exit Car[4]
-						Visitor[10] has exited Car[4]
-						Visitor[11] has been told to exit Car[4]
-						Visitor[11] has exited Car[4]
-						Visitor[12] has been told to exit Car[4]
-						Visitor[12] has exited Car[4]
-						Visitor[13] has been told to exit Car[4]
-						Visitor[13] has exited Car[4]
-						Visitor[14] has been told to exit Car[4]
-						Visitor[14] has exited Car[4]
-						Visitor[15] has been told to exit Car[5]
-						Visitor[15] has exited Car[5]
-						Visitor[16] has been told to exit Car[5]
-						Visitor[16] has exited Car[5]
-						Visitor[17] has been told to exit Car[6]
-						Visitor[17] has exited Car[6]
-						Visitor[18] has been told to exit Car[6]
-						Visitor[18] has exited Car[6]
-						Visitor[19] has been told to exit Car[6]
-						Visitor[19] has exited Car[6]
-						Visitor[20] has been told to exit Car[6]
-						Visitor[20] has exited Car[6]
-						Visitor[21] has been told to exit Car[7]
-						Visitor[21] has exited Car[7]
-						Visitor[22] has been told to exit Car[8]
-						Visitor[22] has exited Car[8]
-						Visitor[23] has been told to exit Car[8]
-						Visitor[23] has exited Car[8]
-						Visitor[24] has been told to exit Car[8]
-						Visitor[24] has exited Car[8]
-						Visitor[25] has been told to exit Car[9]
-						Visitor[25] has exited Car[9]
-						Visitor[26] has been told to exit Car[9]
-						Visitor[26] has exited Car[9]
-						Visitor[27] has been told to exit Car[9]
-						Visitor[27] has exited Car[9]
-						Visitor[28] has been told to exit Car[9]
-						Visitor[28] has exited Car[9]
-						Visitor[29] has been told to exit Car[9]
-						Visitor[29] has exited Car[9]
-						Visitor[0] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[1] has given their ticket to TicketTaker[1]
-						Visitor[2] has given their ticket to TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						Valet[2] has been woken up from the bench
-						TicketTaker[0] has received a ticket from Visitor[0]
-						TicketTaker[0] has accepted a ticket from Visitor[0]
-						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
-						TicketTaker[1] has received a ticket from Visitor[1]
-						TicketTaker[2] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[2]
-						TicketTaker[4] has accepted a ticket from Visitor[0]
-						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
-						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
-						Visitor[0] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
-						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
-						Visitor[1] has entered the Museum
-						Visitor[2] has entered the Museum
-						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
-						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
-						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
-						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
-						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
-						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
-						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
-						Visitor[3] is waiting for TicketTaker[0]
-						Valet[0] is parking Car[0]
-						Visitor[4] is waiting for TicketTaker[1]
-						Visitor[5] is waiting for TicketTaker[2]
-						Valet[1] is parking Car[1]
-						Valet[2] is parking Car[2]
-						Visitor[3] has given their ticket to TicketTaker[0]
-						Visitor[4] has given their ticket to TicketTaker[1]
-						Visitor[5] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[3]
-						TicketTaker[3] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[4]
-						TicketTaker[5] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[5]
-						TicketTaker[7] has accepted a ticket from Visitor[0]
-						EVisitor[3] has entered the Museum
-						Visitor[4] has entered the Museum
-						Visitor[5] has entered the Museum
-						Visitor[6] is waiting for TicketTaker[0]
-						Visitor[7] is waiting for TicketTaker[1]
-						Visitor[8] is waiting for TicketTaker[2]
-						Visitor[6] has given their ticket to TicketTaker[0]
-						Visitor[7] has given their ticket to TicketTaker[1]
-						Visitor[8] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[6]
-						TicketTaker[6] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[7]
-						TicketTaker[8] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[8]
-						TicketTaker[10] has accepted a ticket from Visitor[0]
-						EVisitor[6] has entered the Museum
-						Visitor[7] has entered the Museum
-						Visitor[8] has entered the Museum
-						Valet[1] is going to sleep on the bench
-						Valet[0] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Visitor[9] is waiting for TicketTaker[0]
-						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
-						Visitor[10] is waiting for TicketTaker[1]
-						Visitor[11] is waiting for TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						ValetManager has detected four (or more cars) waiting to be parked
-						Valet[0] has received the keys from LimousineDriver[63] for Car[3]
-						Valet[0] has given LimousineDriver[3] ParkingToken[3] for Car[3]
-						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
-						Valet[2] has been woken up from the bench
-						Visitor[9] has given their ticket to TicketTaker[0]
-						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
-						Visitor[10] has given their ticket to TicketTaker[1]
-						Visitor[11] has given their ticket to TicketTaker[2]
-						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
-						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
-						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
-						TicketTaker[0] has received a ticket from Visitor[9]
-						TicketTaker[9] has accepted a ticket from Visitor[0]
-						EValet[3] is parking Car[3]
-						TicketTaker[1] has received a ticket from Visitor[10]
-						TicketTaker[11] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[11]
-						TicketTaker[13] has accepted a ticket from Visitor[0]
-						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
-						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
-						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
-						Visitor[9] has entered the Museum
-						Visitor[10] has entered the Museum
-						Visitor[11] has entered the Museum
-						Valet[4] is parking Car[4]
-						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
-						Valet[5] is parking Car[5]
-						Visitor[12] is waiting for TicketTaker[0]
-						Visitor[13] is waiting for TicketTaker[1]
-						Visitor[14] is waiting for TicketTaker[2]
-						Visitor[12] has given their ticket to TicketTaker[0]
-						Visitor[13] has given their ticket to TicketTaker[1]
-						Visitor[14] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[12]
-						TicketTaker[12] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[13]
-						TicketTaker[14] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[14]
-						TicketTaker[16] has accepted a ticket from Visitor[0]
-						EVisitor[12] has entered the Museum
-						Visitor[13] has entered the Museum
-						Visitor[14] has entered the Museum
-						Visitor[15] is waiting for TicketTaker[0]
-						Visitor[16] is waiting for TicketTaker[1]
-						Visitor[17] is waiting for TicketTaker[2]
-						Visitor[15] has given their ticket to TicketTaker[0]
-						Visitor[16] has given their ticket to TicketTaker[1]
-						Visitor[17] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[15]
-						TicketTaker[15] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[16]
-						TicketTaker[17] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[17]
-						TicketTaker[19] has accepted a ticket from Visitor[0]
-						EVisitor[15] has entered the Museum
-						Visitor[16] has entered the Museum
-						Visitor[17] has entered the Museum
-						Valet[0] has been woken up from the bench
-						Valet[1] is going to sleep on the bench
-						Visitor[18] is waiting for TicketTaker[0]
-						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
-						Visitor[19] is waiting for TicketTaker[1]
-						Visitor[20] is waiting for TicketTaker[2]
-						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
-						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
-						Valet[1] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Visitor[18] has given their ticket to TicketTaker[0]
-						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
-						Visitor[19] has given their ticket to TicketTaker[1]
-						Visitor[20] has given their ticket to TicketTaker[2]
-						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
-						TicketTaker[0] has received a ticket from Visitor[18]
-						TicketTaker[18] has accepted a ticket from Visitor[0]
-						EValet[6] is parking Car[6]
-						TicketTaker[1] has received a ticket from Visitor[19]
-						TicketTaker[20] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[20]
-						TicketTaker[22] has accepted a ticket from Visitor[0]
-						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
-						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
-						Valet[2] has been woken up from the bench
-						Visitor[18] has entered the Museum
-						Visitor[19] has entered the Museum
-						Visitor[20] has entered the Museum
-						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
-						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
-						Valet[7] is parking Car[7]
-						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
-						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
-						Visitor[21] is waiting for TicketTaker[0]
-						Visitor[22] is waiting for TicketTaker[1]
-						Visitor[23] is waiting for TicketTaker[2]
-						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
-						Valet[8] is parking Car[8]
-						Visitor[21] has given their ticket to TicketTaker[0]
-						Visitor[22] has given their ticket to TicketTaker[1]
-						Visitor[23] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[21]
-						TicketTaker[21] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[22]
-						TicketTaker[23] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[23]
-						TicketTaker[25] has accepted a ticket from Visitor[0]
-						EVisitor[21] has entered the Museum
-						Visitor[22] has entered the Museum
-						Visitor[23] has entered the Museum
-						Visitor[24] is waiting for TicketTaker[0]
-						Visitor[25] is waiting for TicketTaker[1]
-						Visitor[26] is waiting for TicketTaker[2]
-						Visitor[24] has given their ticket to TicketTaker[0]
-						Visitor[25] has given their ticket to TicketTaker[1]
-						Visitor[26] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[24]
-						TicketTaker[24] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[25]
-						TicketTaker[26] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[26]
-						TicketTaker[28] has accepted a ticket from Visitor[0]
-						EVisitor[24] has entered the Museum
-						Visitor[25] has entered the Museum
-						Visitor[26] has entered the Museum
-						Visitor[27] is waiting for TicketTaker[0]
-						Visitor[0] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[28] is waiting for TicketTaker[1]
-						Visitor[1] has left the Museum
-						Visitor[29] is waiting for TicketTaker[2]
-						Visitor[2] has left the Museum
-						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
-						Visitor[27] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[28] has given their ticket to TicketTaker[1]
-						Visitor[29] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[27]
-						TicketTaker[27] has accepted a ticket from Visitor[0]
-						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
-						TicketTaker[1] has received a ticket from Visitor[28]
-						TicketTaker[29] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[29]
-						TicketTaker[31] has accepted a ticket from Visitor[0]
-						EValet[1] is going to sleep on the bench
-						Visitor[27] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
-						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
-						Visitor[28] has entered the Museum
-						Visitor[29] has entered the Museum
-						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
-						Visitor[3] has left the Museum
-						Valet[9] is parking Car[9]
-						Visitor[4] has left the Museum
-						Visitor[5] has left the Museum
-						Valet[2] is going to sleep on the bench
-						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
-						Valet[1] has been woken up from the bench
-						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
-						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
-						Visitor[6] has left the Museum
-						Visitor[7] has left the Museum
-						Visitor[8] has left the Museum
-						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
-						Valet[2] has been woken up from the bench
-						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
-						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
-						Visitor[9] has left the Museum
-						Visitor[10] has left the Museum
-						Visitor[11] has left the Museum
-						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
-						Visitor[12] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[13] has left the Museum
-						Visitor[14] has left the Museum
-						ValetManager has detected four (or more cars) waiting to be parked
-						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
-						Valet[0] has been woken up from the bench
-						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
-						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
-						Valet[1] has given LimousineDriver[1] Car[1]
-						Visitor[15] has left the Museum
-						Visitor[16] has left the Museum
-						Visitor[17] has left the Museum
-						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
-						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
-						Valet[1] has received tip from LimousineDriver[1] for Car[1]
-						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
-						LimoDriver[1] has told his visitors to get into Car[1]
-						Valet[0] has given LimousineDriver[0] Car[0]
-						Visitor[2] has been told to get into Car[1]
-						Visitor[2] has gotten into Car[1] and is waiting to leave
-						Visitor[3] has been told to get into Car[1]
-						Visitor[3] has gotten into Car[1] and is waiting to leave
-						Visitor[4] has been told to get into Car[1]
-						Visitor[4] has gotten into Car[1] and is waiting to leave
-						Visitor[5] has been told to get into Car[1]
-						Visitor[5] has gotten into Car[1] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
-						LimoDriver[1] has left the Museum in Car[1]
-						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
-						Valet[0] has received tip from LimousineDriver[0] for Car[0]
-						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
-						Valet[0] is going to sleep on the bench
-						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
-						Visitor[18] has left the Museum
-						Valet[2] has given LimousineDriver[2] Car[2]
-						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
-						LimoDriver[0] has told his visitors to get into Car[0]
-						Visitor[19] has left the Museum
-						Visitor[20] has left the Museum
-						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
-						Visitor[0] has been told to get into Car[0]
-						Visitor[0] has gotten into Car[0] and is waiting to leave
-						Visitor[1] has been told to get into Car[0]
-						Visitor[1] has gotten into Car[0] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
-						Valet[2] has received tip from LimousineDriver[2] for Car[2]
-						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
-						Valet[2] is going to sleep on the bench
-						LimoDriver[0] has left the Museum in Car[0]
-						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
-						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
-						LimoDriver[2] has told his visitors to get into Car[2]
-						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
-						Visitor[6] has been told to get into Car[2]
-						Visitor[6] has gotten into Car[2] and is waiting to leave
-						Valet[2] has been woken up from the bench
-						LimoDriver[2] has left the Museum in Car[2]
-						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
-						Valet[1] has given LimousineDriver[4] Car[4]
-						Visitor[21] has left the Museum
-						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
-						Visitor[22] has left the Museum
-						Visitor[23] has left the Museum
-						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
-						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
-						Valet[1] has received tip from LimousineDriver[4] for Car[4]
-						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
-						LimoDriver[4] has told his visitors to get into Car[4]
-						Visitor[10] has been told to get into Car[4]
-						Visitor[10] has gotten into Car[4] and is waiting to leave
-						Visitor[11] has been told to get into Car[4]
-						Visitor[11] has gotten into Car[4] and is waiting to leave
-						Visitor[12] has been told to get into Car[4]
-						Visitor[12] has gotten into Car[4] and is waiting to leave
-						Visitor[13] has been told to get into Car[4]
-						Visitor[13] has gotten into Car[4] and is waiting to leave
-						Visitor[14] has been told to get into Car[4]
-						Visitor[14] has gotten into Car[4] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						Valet[0] has given LimousineDriver[3] Car[3]
-						LimoDriver[4] has left the Museum in Car[4]
-						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
-						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
-						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
-						Visitor[24] has left the Museum
-						Valet[0] has received tip from LimousineDriver[3] for Car[3]
-						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
-						Valet[0] is going to sleep on the bench
-						Visitor[25] has left the Museum
-						Visitor[26] has left the Museum
-						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
-						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
-						LimoDriver[3] has told his visitors to get into Car[3]
-						Valet[2] has given LimousineDriver[5] Car[5]
-						Visitor[7] has been told to get into Car[3]
-						Visitor[7] has gotten into Car[3] and is waiting to leave
-						Visitor[8] has been told to get into Car[3]
-						Visitor[8] has gotten into Car[3] and is waiting to leave
-						Visitor[9] has been told to get into Car[3]
-						Visitor[9] has gotten into Car[3] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
-						LimoDriver[3] has left the Museum in Car[3]
-						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
-						Valet[2] has received tip from LimousineDriver[5] for Car[5]
-						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
-						Valet[2] is going to sleep on the bench
-						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
-						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
-						LimoDriver[5] has told his visitors to get into Car[5]
-						Visitor[27] has left the Museum
-						Visitor[15] has been told to get into Car[5]
-						Visitor[15] has gotten into Car[5] and is waiting to leave
-						Visitor[16] has been told to get into Car[5]
-						Visitor[16] has gotten into Car[5] and is waiting to leave
-						Visitor[28] has left the Museum
-						Visitor[29] has left the Museum
-						LimoDriver[5] has left the Museum in Car[5]
-						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
-						Valet[2] has been woken up from the bench
-						Valet[1] has given LimousineDriver[7] Car[7]
-						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
-						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
-						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
-						Valet[1] has received tip from LimousineDriver[7] for Car[7]
-						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
-						LimoDriver[7] has told his visitors to get into Car[7]
-						Visitor[21] has been told to get into Car[7]
-						Visitor[21] has gotten into Car[7] and is waiting to leave
-						LimoDriver[7] has left the Museum in Car[7]
-						Valet[0] has given LimousineDriver[6] Car[6]
-						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
-						Valet[0] has received tip from LimousineDriver[6] for Car[6]
-						Valet[0] has returned keys to LimousineDriver[6] for Car[6]
-						Valet[0] is going to sleep on the bench
-						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
-						LimoDriver[6] has told his visitors to get into Car[6]
-						Visitor[17] has been told to get into Car[6]
-						Visitor[17] has gotten into Car[6] and is waiting to leave
-						Visitor[18] has been told to get into Car[6]
-						Visitor[18] has gotten into Car[6] and is waiting to leave
-						Visitor[19] has been told to get into Car[6]
-						Visitor[19] has gotten into Car[6] and is waiting to leave
-						Visitor[20] has been told to get into Car[6]
-						Visitor[20] has gotten into Car[6] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[6] has left the Museum in Car[6]
-						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
-						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
-						Valet[2] has given LimousineDriver[9] Car[9]
-						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
-						Valet[2] has received tip from LimousineDriver[9] for Car[9]
-						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
-						Valet[2] is going to sleep on the bench
-						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
-						LimoDriver[9] has told his visitors to get into Car[9]
-						Visitor[25] has been told to get into Car[9]
-						Visitor[25] has gotten into Car[9] and is waiting to leave
-						Visitor[26] has been told to get into Car[9]
-						Visitor[26] has gotten into Car[9] and is waiting to leave
-						Visitor[27] has been told to get into Car[9]
-						Visitor[27] has gotten into Car[9] and is waiting to leave
-						Visitor[28] has been told to get into Car[9]
-						Visitor[28] has gotten into Car[9] and is waiting to leave
-						Visitor[29] has been told to get into Car[9]
-						Visitor[29] has gotten into Car[9] and is waiting to leave
-						LimoDriver[9] has left the Museum in Car[9]
-						Valet[0] has given LimousineDriver[8] Car[8]
-						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
-						Valet[0] has received tip from LimousineDriver[8] for Car[8]
-						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
-						Valet[0] is going to sleep on the bench
-						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
-						LimoDriver[8] has told his visitors to get into Car[8]
-						Visitor[22] has been told to get into Car[8]
-						Visitor[22] has gotten into Car[8] and is waiting to leave
-						Visitor[23] has been told to get into Car[8]
-						Visitor[23] has gotten into Car[8] and is waiting to leave
-						Visitor[24] has been told to get into Car[8]
-						Visitor[24] has gotten into Car[8] and is waiting to leave
-						LimoDriver[8] has left the Museum in Car[8]
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
+	Test output:
+		
+			----------------------------------
+			Beginning yield test
+			----------------------------------
+			Yield: 0
+			Yield: 1
+			
+			...
 						
-						Ticks: total 174720, idle 0, system 43420, user 131300
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
+			Yield: 98
+			Yield: 99
+			No threads ready or runnable, and no pending interrupts.
+			Assuming the program completed.
+			Machine halting!
 						
-						Cleaning up...
-
-					
-				Multiprogramming
-					- Tests the museum in a multithreaded, multiprogrammed
-					environment by exec-ing two instances of the museum.
-					
-					Execute: From userprog, run nachos -x ../test/multiprogrammed_museum.c
-					
-					Test output:
-					
-						The Museum of Natural History Parking Simulation
-							1. System Test
-							2. Limos Park First, Then Cars Test
-							3. No Valet, No Parking Test
-							4. Ticket Taker Test
-							5. Drivers Leave Properly Test
-							6. Valet Manager Test - Sending Valet to Back Room
-							7. Valet Manager Test - Waking Up Valet From Back Room
-						Please enter one of the options above: Here
-						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
-						Number of CarDrivers = [0]
-						Number of ParkingValets = [3]
-						Number of Visitors = [30]
-						Number of TicketTakers = [3]
-						Number of Cars = [10]
-						The Museum of Natural History Parking Simulation
-							1. System Test
-							2. Limos Park First, Then Cars Test
-							3. No Valet, No Parking Test
-							4. Ticket Taker Test
-							5. Drivers Leave Properly Test
-							6. Valet Manager Test - Sending Valet to Back Room
-							7. Valet Manager Test - Waking Up Valet From Back Room
-						Please enter one of the options above: Here
-						Enter number of Ticket Takers (1-5): Enter number of Parking Valets (1-5): Enter number of Cars (5-20): Number of LimousineDrivers = [10]
-						Number of CarDrivers = [0]
-						Number of ParkingValets = [3]
-						Number of Visitors = [30]
-						Number of TicketTakers = [3]
-						Number of Cars = [10]
-						Valet[0] is going to sleep on the bench
-						Valet[1] is going to sleep on the bench
-						Valet[2] is going to sleep on the bench
-						Valet[0] is going to sleep on the bench
-						Valet[1] is going to sleep on the bench
-						Valet[2] is going to sleep on the bench
-						LimoDriver[0] has parked Car[0] at the Museum
-						LimoDriver[0] has told his visitors to leave Car[0]
-						LimoDriver[1] has parked Car[1] at the Museum
-						LimoDriver[1] has told his visitors to leave Car[1]
-						LimoDriver[2] has parked Car[2] at the Museum
-						LimoDriver[2] has told his visitors to leave Car[2]
-						LimoDriver[3] has parked Car[3] at the Museum
-						LimoDriver[3] has told his visitors to leave Car[3]
-						LimoDriver[4] has parked Car[4] at the Museum
-						LimoDriver[4] has told his visitors to leave Car[4]
-						LimoDriver[5] has parked Car[5] at the Museum
-						LimoDriver[5] has told his visitors to leave Car[5]
-						LimoDriver[6] has parked Car[6] at the Museum
-						LimoDriver[6] has told his visitors to leave Car[6]
-						LimoDriver[7] has parked Car[7] at the Museum
-						LimoDriver[7] has told his visitors to leave Car[7]
-						LimoDriver[8] has parked Car[8] at the Museum
-						LimoDriver[8] has told his visitors to leave Car[8]
-						LimoDriver[9] has parked Car[9] at the Museum
-						LimoDriver[9] has told his visitors to leave Car[9]
-						LimoDriver[0] has parked Car[0] at the Museum
-						LimoDriver[0] has told his visitors to leave Car[0]
-						LimoDriver[1] has parked Car[1] at the Museum
-						LimoDriver[1] has told his visitors to leave Car[1]
-						LimoDriver[2] has parked Car[2] at the Museum
-						LimoDriver[2] has told his visitors to leave Car[2]
-						LimoDriver[3] has parked Car[3] at the Museum
-						LimoDriver[3] has told his visitors to leave Car[3]
-						LimoDriver[4] has parked Car[4] at the Museum
-						LimoDriver[4] has told his visitors to leave Car[4]
-						LimoDriver[5] has parked Car[5] at the Museum
-						LimoDriver[5] has told his visitors to leave Car[5]
-						LimoDriver[6] has parked Car[6] at the Museum
-						LimoDriver[6] has told his visitors to leave Car[6]
-						LimoDriver[7] has parked Car[7] at the Museum
-						LimoDriver[7] has told his visitors to leave Car[7]
-						LimoDriver[8] has parked Car[8] at the Museum
-						LimoDriver[8] has told his visitors to leave Car[8]
-						LimoDriver[9] has parked Car[9] at the Museum
-						LimoDriver[9] has told his visitors to leave Car[9]
-						Visitor[0] has been told to exit Car[0]
-						Visitor[0] has exited Car[0]
-						Visitor[0] is waiting for TicketTaker[0]
-						Visitor[1] has been told to exit Car[0]
-						Visitor[1] has exited Car[0]
-						Visitor[1] is waiting for TicketTaker[1]
-						Visitor[2] has been told to exit Car[1]
-						Visitor[2] has exited Car[1]
-						Visitor[2] is waiting for TicketTaker[2]
-						Visitor[3] has been told to exit Car[1]
-						Visitor[3] has exited Car[1]
-						Visitor[4] has been told to exit Car[1]
-						Visitor[4] has exited Car[1]
-						Visitor[5] has been told to exit Car[1]
-						Visitor[5] has exited Car[1]
-						Visitor[6] has been told to exit Car[2]
-						Visitor[6] has exited Car[2]
-						Visitor[7] has been told to exit Car[3]
-						Visitor[7] has exited Car[3]
-						Visitor[8] has been told to exit Car[3]
-						Visitor[8] has exited Car[3]
-						Visitor[9] has been told to exit Car[3]
-						Visitor[9] has exited Car[3]
-						Visitor[10] has been told to exit Car[4]
-						Visitor[10] has exited Car[4]
-						Visitor[11] has been told to exit Car[4]
-						Visitor[11] has exited Car[4]
-						Visitor[12] has been told to exit Car[4]
-						Visitor[12] has exited Car[4]
-						Visitor[13] has been told to exit Car[4]
-						Visitor[13] has exited Car[4]
-						Visitor[14] has been told to exit Car[4]
-						Visitor[14] has exited Car[4]
-						Visitor[15] has been told to exit Car[5]
-						Visitor[15] has exited Car[5]
-						Visitor[16] has been told to exit Car[5]
-						Visitor[16] has exited Car[5]
-						Visitor[17] has been told to exit Car[6]
-						Visitor[17] has exited Car[6]
-						Visitor[18] has been told to exit Car[6]
-						Visitor[18] has exited Car[6]
-						Visitor[19] has been told to exit Car[6]
-						Visitor[19] has exited Car[6]
-						Visitor[20] has been told to exit Car[6]
-						Visitor[20] has exited Car[6]
-						Visitor[21] has been told to exit Car[7]
-						Visitor[21] has exited Car[7]
-						Visitor[22] has been told to exit Car[8]
-						Visitor[22] has exited Car[8]
-						Visitor[23] has been told to exit Car[8]
-						Visitor[23] has exited Car[8]
-						Visitor[24] has been told to exit Car[8]
-						Visitor[24] has exited Car[8]
-						Visitor[25] has been told to exit Car[9]
-						Visitor[25] has exited Car[9]
-						Visitor[26] has been told to exit Car[9]
-						Visitor[26] has exited Car[9]
-						Visitor[27] has been told to exit Car[9]
-						Visitor[27] has exited Car[9]
-						Visitor[28] has been told to exit Car[9]
-						Visitor[28] has exited Car[9]
-						Visitor[29] has been told to exit Car[9]
-						Visitor[29] has exited Car[9]
-						Visitor[0] has been told to exit Car[0]
-						Visitor[0] has exited Car[0]
-						Visitor[0] is waiting for TicketTaker[0]
-						Visitor[1] has been told to exit Car[0]
-						Visitor[1] has exited Car[0]
-						Visitor[1] is waiting for TicketTaker[1]
-						Visitor[2] has been told to exit Car[1]
-						Visitor[2] has exited Car[1]
-						Visitor[2] is waiting for TicketTaker[2]
-						Visitor[3] has been told to exit Car[1]
-						Visitor[3] has exited Car[1]
-						Visitor[4] has been told to exit Car[1]
-						Visitor[4] has exited Car[1]
-						Visitor[5] has been told to exit Car[1]
-						Visitor[5] has exited Car[1]
-						Visitor[6] has been told to exit Car[2]
-						Visitor[6] has exited Car[2]
-						Visitor[7] has been told to exit Car[3]
-						Visitor[7] has exited Car[3]
-						Visitor[8] has been told to exit Car[3]
-						Visitor[8] has exited Car[3]
-						Visitor[9] has been told to exit Car[3]
-						Visitor[9] has exited Car[3]
-						Visitor[10] has been told to exit Car[4]
-						Visitor[10] has exited Car[4]
-						Visitor[11] has been told to exit Car[4]
-						Visitor[11] has exited Car[4]
-						Visitor[12] has been told to exit Car[4]
-						Visitor[12] has exited Car[4]
-						Visitor[13] has been told to exit Car[4]
-						Visitor[13] has exited Car[4]
-						Visitor[14] has been told to exit Car[4]
-						Visitor[14] has exited Car[4]
-						Visitor[15] has been told to exit Car[5]
-						Visitor[15] has exited Car[5]
-						Visitor[16] has been told to exit Car[5]
-						Visitor[16] has exited Car[5]
-						Visitor[17] has been told to exit Car[6]
-						Visitor[17] has exited Car[6]
-						Visitor[18] has been told to exit Car[6]
-						Visitor[18] has exited Car[6]
-						Visitor[19] has been told to exit Car[6]
-						Visitor[19] has exited Car[6]
-						Visitor[20] has been told to exit Car[6]
-						Visitor[20] has exited Car[6]
-						Visitor[21] has been told to exit Car[7]
-						Visitor[21] has exited Car[7]
-						Visitor[22] has been told to exit Car[8]
-						Visitor[22] has exited Car[8]
-						Visitor[23] has been told to exit Car[8]
-						Visitor[23] has exited Car[8]
-						Visitor[24] has been told to exit Car[8]
-						Visitor[24] has exited Car[8]
-						Visitor[25] has been told to exit Car[9]
-						Visitor[25] has exited Car[9]
-						Visitor[26] has been told to exit Car[9]
-						Visitor[26] has exited Car[9]
-						Visitor[27] has been told to exit Car[9]
-						Visitor[27] has exited Car[9]
-						Visitor[28] has been told to exit Car[9]
-						Visitor[28] has exited Car[9]
-						Visitor[29] has been told to exit Car[9]
-						Visitor[29] has exited Car[9]
-						Visitor[0] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[1] has given their ticket to TicketTaker[1]
-						Visitor[2] has given their ticket to TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						Valet[2] has been woken up from the bench
-						Visitor[0] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[1] has given their ticket to TicketTaker[1]
-						Visitor[2] has given their ticket to TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						Valet[2] has been woken up from the bench
-						TicketTaker[0] has received a ticket from Visitor[0]
-						TicketTaker[0] has accepted a ticket from Visitor[0]
-						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
-						TicketTaker[1] has received a ticket from Visitor[1]
-						TicketTaker[2] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[2]
-						TicketTaker[4] has accepted a ticket from Visitor[0]
-						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
-						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
-						TicketTaker[0] has received a ticket from Visitor[0]
-						TicketTaker[0] has accepted a ticket from Visitor[0]
-						ELimoDriver[0] has given their keys to ParkingValet[0] for Car[0]
-						TicketTaker[1] has received a ticket from Visitor[1]
-						TicketTaker[2] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[2]
-						TicketTaker[4] has accepted a ticket from Visitor[0]
-						ELimoDriver[1] has given their keys to ParkingValet[1] for Car[1]
-						LimoDriver[2] has given their keys to ParkingValet[2] for Car[2]
-						Visitor[0] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
-						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
-						Visitor[1] has entered the Museum
-						Visitor[2] has entered the Museum
-						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
-						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
-						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
-						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
-						Visitor[0] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[0] for Car[0]
-						Valet[0] has given LimousineDriver[0] ParkingToken[0] for Car[0]
-						Visitor[1] has entered the Museum
-						Visitor[2] has entered the Museum
-						Valet[1] has received the keys from LimousineDriver[21] for Car[1]
-						Valet[1] has given LimousineDriver[1] ParkingToken[1] for Car[1]
-						Valet[2] has received the keys from LimousineDriver[42] for Car[2]
-						Valet[2] has given LimousineDriver[2] ParkingToken[2] for Car[2]
-						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
-						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
-						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
-						LimoDriver[0] has received ParkingToken[0] from ParkingValet[0] for Car[0]
-						LimoDriver[1] has received ParkingToken[1] from ParkingValet[1] for Car[1]
-						LimoDriver[2] has received ParkingToken[2] from ParkingValet[2] for Car[2]
-						Visitor[3] is waiting for TicketTaker[0]
-						Valet[0] is parking Car[0]
-						Visitor[4] is waiting for TicketTaker[1]
-						Visitor[5] is waiting for TicketTaker[2]
-						Valet[1] is parking Car[1]
-						Valet[2] is parking Car[2]
-						Visitor[3] is waiting for TicketTaker[0]
-						Valet[0] is parking Car[0]
-						Visitor[4] is waiting for TicketTaker[1]
-						Visitor[5] is waiting for TicketTaker[2]
-						Valet[1] is parking Car[1]
-						Valet[2] is parking Car[2]
-						Visitor[3] has given their ticket to TicketTaker[0]
-						Visitor[4] has given their ticket to TicketTaker[1]
-						Visitor[5] has given their ticket to TicketTaker[2]
-						Visitor[3] has given their ticket to TicketTaker[0]
-						Visitor[4] has given their ticket to TicketTaker[1]
-						Visitor[5] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[3]
-						TicketTaker[3] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[4]
-						TicketTaker[5] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[5]
-						TicketTaker[7] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[3]
-						TicketTaker[3] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[4]
-						TicketTaker[5] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[5]
-						TicketTaker[7] has accepted a ticket from Visitor[0]
-						EVisitor[3] has entered the Museum
-						Visitor[4] has entered the Museum
-						Visitor[5] has entered the Museum
-						Visitor[3] has entered the Museum
-						Visitor[4] has entered the Museum
-						Visitor[5] has entered the Museum
-						Visitor[6] is waiting for TicketTaker[0]
-						Visitor[7] is waiting for TicketTaker[1]
-						Visitor[8] is waiting for TicketTaker[2]
-						Visitor[6] is waiting for TicketTaker[0]
-						Visitor[7] is waiting for TicketTaker[1]
-						Visitor[8] is waiting for TicketTaker[2]
-						Visitor[6] has given their ticket to TicketTaker[0]
-						Visitor[7] has given their ticket to TicketTaker[1]
-						Visitor[8] has given their ticket to TicketTaker[2]
-						Visitor[6] has given their ticket to TicketTaker[0]
-						Visitor[7] has given their ticket to TicketTaker[1]
-						Visitor[8] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[6]
-						TicketTaker[6] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[7]
-						TicketTaker[8] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[8]
-						TicketTaker[10] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[6]
-						TicketTaker[6] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[7]
-						TicketTaker[8] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[8]
-						TicketTaker[10] has accepted a ticket from Visitor[0]
-						EVisitor[6] has entered the Museum
-						Visitor[7] has entered the Museum
-						Visitor[8] has entered the Museum
-						Valet[1] is going to sleep on the bench
-						Visitor[6] has entered the Museum
-						Visitor[7] has entered the Museum
-						Visitor[8] has entered the Museum
-						Valet[1] is going to sleep on the bench
-						Valet[0] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Valet[0] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Visitor[9] is waiting for TicketTaker[0]
-						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
-						Visitor[10] is waiting for TicketTaker[1]
-						Visitor[11] is waiting for TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						ValetManager has detected four (or more cars) waiting to be parked
-						Visitor[9] is waiting for TicketTaker[0]
-						LimoDriver[3] has given their keys to ParkingValet[0] for Car[3]
-						Visitor[10] is waiting for TicketTaker[1]
-						Visitor[11] is waiting for TicketTaker[2]
-						Valet[1] has been woken up from the bench
-						ValetManager has detected four (or more cars) waiting to be parked
-						Valet[0] has received the keys from LimousineDriver[63] for Car[3]
-						Valet[0] has given LimousineDriver[3] ParkingToken[3] for Car[3]
-						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
-						Valet[2] has been woken up from the bench
-						Valet[0] has received the keys from CarDriver[3] for Car[3]
-						Valet[0] has given CarDriver[3] ParkingToken[3] for Car[3]
-						LimoDriver[4] has given their keys to ParkingValet[1] for Car[4]
-						Valet[2] has been woken up from the bench
-						Visitor[9] has given their ticket to TicketTaker[0]
-						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
-						Visitor[10] has given their ticket to TicketTaker[1]
-						Visitor[11] has given their ticket to TicketTaker[2]
-						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
-						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
-						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
-						Visitor[9] has given their ticket to TicketTaker[0]
-						LimoDriver[3] has received ParkingToken[3] from ParkingValet[0] for Car[3]
-						Visitor[10] has given their ticket to TicketTaker[1]
-						Visitor[11] has given their ticket to TicketTaker[2]
-						Valet[1] has received the keys from LimousineDriver[84] for Car[4]
-						Valet[1] has given LimousineDriver[4] ParkingToken[4] for Car[4]
-						LimoDriver[5] has given their keys to ParkingValet[2] for Car[5]
-						TicketTaker[0] has received a ticket from Visitor[9]
-						TicketTaker[9] has accepted a ticket from Visitor[0]
-						EValet[3] is parking Car[3]
-						TicketTaker[1] has received a ticket from Visitor[10]
-						TicketTaker[11] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[11]
-						TicketTaker[13] has accepted a ticket from Visitor[0]
-						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
-						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
-						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
-						TicketTaker[0] has received a ticket from Visitor[9]
-						TicketTaker[9] has accepted a ticket from Visitor[0]
-						EValet[3] is parking Car[3]
-						TicketTaker[1] has received a ticket from Visitor[10]
-						TicketTaker[11] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[11]
-						TicketTaker[13] has accepted a ticket from Visitor[0]
-						ELimoDriver[4] has received ParkingToken[4] from ParkingValet[1] for Car[4]
-						Valet[2] has received the keys from LimousineDriver[105] for Car[5]
-						Valet[2] has given LimousineDriver[5] ParkingToken[5] for Car[5]
-						Visitor[9] has entered the Museum
-						Visitor[10] has entered the Museum
-						Visitor[11] has entered the Museum
-						Valet[4] is parking Car[4]
-						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
-						Visitor[9] has entered the Museum
-						Visitor[10] has entered the Museum
-						Visitor[11] has entered the Museum
-						Valet[4] is parking Car[4]
-						LimoDriver[5] has received ParkingToken[5] from ParkingValet[2] for Car[5]
-						Valet[5] is parking Car[5]
-						Valet[5] is parking Car[5]
-						Visitor[12] is waiting for TicketTaker[0]
-						Visitor[13] is waiting for TicketTaker[1]
-						Visitor[14] is waiting for TicketTaker[2]
-						Visitor[12] is waiting for TicketTaker[0]
-						Visitor[13] is waiting for TicketTaker[1]
-						Visitor[14] is waiting for TicketTaker[2]
-						Visitor[12] has given their ticket to TicketTaker[0]
-						Visitor[13] has given their ticket to TicketTaker[1]
-						Visitor[14] has given their ticket to TicketTaker[2]
-						Visitor[12] has given their ticket to TicketTaker[0]
-						Visitor[13] has given their ticket to TicketTaker[1]
-						Visitor[14] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[12]
-						TicketTaker[12] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[13]
-						TicketTaker[14] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[14]
-						TicketTaker[16] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[12]
-						TicketTaker[12] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[13]
-						TicketTaker[14] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[14]
-						TicketTaker[16] has accepted a ticket from Visitor[0]
-						EVisitor[12] has entered the Museum
-						Visitor[13] has entered the Museum
-						Visitor[14] has entered the Museum
-						Visitor[12] has entered the Museum
-						Visitor[13] has entered the Museum
-						Visitor[14] has entered the Museum
-						Visitor[15] is waiting for TicketTaker[0]
-						Visitor[16] is waiting for TicketTaker[1]
-						Visitor[17] is waiting for TicketTaker[2]
-						Visitor[15] is waiting for TicketTaker[0]
-						Visitor[16] is waiting for TicketTaker[1]
-						Visitor[17] is waiting for TicketTaker[2]
-						Visitor[15] has given their ticket to TicketTaker[0]
-						Visitor[16] has given their ticket to TicketTaker[1]
-						Visitor[17] has given their ticket to TicketTaker[2]
-						Visitor[15] has given their ticket to TicketTaker[0]
-						Visitor[16] has given their ticket to TicketTaker[1]
-						Visitor[17] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[15]
-						TicketTaker[15] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[16]
-						TicketTaker[17] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[17]
-						TicketTaker[19] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[15]
-						TicketTaker[15] has accepted a ticket from Visitor[0]
-						EValet[0] is going to sleep on the bench
-						TicketTaker[1] has received a ticket from Visitor[16]
-						TicketTaker[17] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[17]
-						TicketTaker[19] has accepted a ticket from Visitor[0]
-						EVisitor[15] has entered the Museum
-						Visitor[16] has entered the Museum
-						Visitor[17] has entered the Museum
-						Visitor[15] has entered the Museum
-						Visitor[16] has entered the Museum
-						Visitor[17] has entered the Museum
-						Valet[0] has been woken up from the bench
-						Valet[1] is going to sleep on the bench
-						Valet[0] has been woken up from the bench
-						Valet[1] is going to sleep on the bench
-						Visitor[18] is waiting for TicketTaker[0]
-						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
-						Visitor[19] is waiting for TicketTaker[1]
-						Visitor[20] is waiting for TicketTaker[2]
-						Visitor[18] is waiting for TicketTaker[0]
-						LimoDriver[6] has given their keys to ParkingValet[0] for Car[6]
-						Visitor[19] is waiting for TicketTaker[1]
-						Visitor[20] is waiting for TicketTaker[2]
-						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
-						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
-						Valet[1] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Valet[0] has received the keys from LimousineDriver[126] for Car[6]
-						Valet[0] has given LimousineDriver[6] ParkingToken[6] for Car[6]
-						Valet[1] has been woken up from the bench
-						Valet[2] is going to sleep on the bench
-						Visitor[18] has given their ticket to TicketTaker[0]
-						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
-						Visitor[19] has given their ticket to TicketTaker[1]
-						Visitor[20] has given their ticket to TicketTaker[2]
-						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
-						Visitor[18] has given their ticket to TicketTaker[0]
-						LimoDriver[6] has received ParkingToken[6] from ParkingValet[0] for Car[6]
-						Visitor[19] has given their ticket to TicketTaker[1]
-						Visitor[20] has given their ticket to TicketTaker[2]
-						LimoDriver[7] has given their keys to ParkingValet[1] for Car[7]
-						TicketTaker[0] has received a ticket from Visitor[18]
-						TicketTaker[18] has accepted a ticket from Visitor[0]
-						EValet[6] is parking Car[6]
-						TicketTaker[1] has received a ticket from Visitor[19]
-						TicketTaker[20] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[20]
-						TicketTaker[22] has accepted a ticket from Visitor[0]
-						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
-						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
-						Valet[2] has been woken up from the bench
-						TicketTaker[0] has received a ticket from Visitor[18]
-						TicketTaker[18] has accepted a ticket from Visitor[0]
-						EValet[6] is parking Car[6]
-						TicketTaker[1] has received a ticket from Visitor[19]
-						TicketTaker[20] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[20]
-						TicketTaker[22] has accepted a ticket from Visitor[0]
-						EValet[1] has received the keys from LimousineDriver[147] for Car[7]
-						Valet[1] has given LimousineDriver[7] ParkingToken[7] for Car[7]
-						Valet[2] has been woken up from the bench
-						Visitor[18] has entered the Museum
-						Visitor[19] has entered the Museum
-						Visitor[20] has entered the Museum
-						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
-						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
-						Visitor[18] has entered the Museum
-						Visitor[19] has entered the Museum
-						Visitor[20] has entered the Museum
-						LimoDriver[7] has received ParkingToken[7] from ParkingValet[1] for Car[7]
-						LimoDriver[8] has given their keys to ParkingValet[2] for Car[8]
-						Valet[7] is parking Car[7]
-						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
-						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
-						Valet[7] is parking Car[7]
-						Valet[2] has received the keys from LimousineDriver[168] for Car[8]
-						Valet[2] has given LimousineDriver[8] ParkingToken[8] for Car[8]
-						Visitor[21] is waiting for TicketTaker[0]
-						Visitor[22] is waiting for TicketTaker[1]
-						Visitor[23] is waiting for TicketTaker[2]
-						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
-						Visitor[21] is waiting for TicketTaker[0]
-						Visitor[22] is waiting for TicketTaker[1]
-						Visitor[23] is waiting for TicketTaker[2]
-						LimoDriver[8] has received ParkingToken[8] from ParkingValet[2] for Car[8]
-						Valet[8] is parking Car[8]
-						Valet[8] is parking Car[8]
-						Visitor[21] has given their ticket to TicketTaker[0]
-						Visitor[22] has given their ticket to TicketTaker[1]
-						Visitor[23] has given their ticket to TicketTaker[2]
-						Visitor[21] has given their ticket to TicketTaker[0]
-						Visitor[22] has given their ticket to TicketTaker[1]
-						Visitor[23] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[21]
-						TicketTaker[21] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[22]
-						TicketTaker[23] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[23]
-						TicketTaker[25] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[21]
-						TicketTaker[21] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[22]
-						TicketTaker[23] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[23]
-						TicketTaker[25] has accepted a ticket from Visitor[0]
-						EVisitor[21] has entered the Museum
-						Visitor[22] has entered the Museum
-						Visitor[23] has entered the Museum
-						Visitor[21] has entered the Museum
-						Visitor[22] has entered the Museum
-						Visitor[23] has entered the Museum
-						Visitor[24] is waiting for TicketTaker[0]
-						Visitor[25] is waiting for TicketTaker[1]
-						Visitor[26] is waiting for TicketTaker[2]
-						Visitor[24] is waiting for TicketTaker[0]
-						Visitor[25] is waiting for TicketTaker[1]
-						Visitor[26] is waiting for TicketTaker[2]
-						Visitor[24] has given their ticket to TicketTaker[0]
-						Visitor[25] has given their ticket to TicketTaker[1]
-						Visitor[26] has given their ticket to TicketTaker[2]
-						Visitor[24] has given their ticket to TicketTaker[0]
-						Visitor[25] has given their ticket to TicketTaker[1]
-						Visitor[26] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[24]
-						TicketTaker[24] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[25]
-						TicketTaker[26] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[26]
-						TicketTaker[28] has accepted a ticket from Visitor[0]
-						ETicketTaker[0] has received a ticket from Visitor[24]
-						TicketTaker[24] has accepted a ticket from Visitor[0]
-						ETicketTaker[1] has received a ticket from Visitor[25]
-						TicketTaker[26] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[26]
-						TicketTaker[28] has accepted a ticket from Visitor[0]
-						EVisitor[24] has entered the Museum
-						Visitor[25] has entered the Museum
-						Visitor[26] has entered the Museum
-						Visitor[24] has entered the Museum
-						Visitor[25] has entered the Museum
-						Visitor[26] has entered the Museum
-						Visitor[27] is waiting for TicketTaker[0]
-						Visitor[0] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[28] is waiting for TicketTaker[1]
-						Visitor[1] has left the Museum
-						Visitor[29] is waiting for TicketTaker[2]
-						Visitor[2] has left the Museum
-						Visitor[27] is waiting for TicketTaker[0]
-						Visitor[0] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[28] is waiting for TicketTaker[1]
-						Visitor[1] has left the Museum
-						Visitor[29] is waiting for TicketTaker[2]
-						Visitor[2] has left the Museum
-						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
-						LimoDriver[0] has been notified that all their Visitors have left the Museum for Car[0]
-						Visitor[27] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[28] has given their ticket to TicketTaker[1]
-						Visitor[29] has given their ticket to TicketTaker[2]
-						Visitor[27] has given their ticket to TicketTaker[0]
-						Valet[0] has been woken up from the bench
-						Visitor[28] has given their ticket to TicketTaker[1]
-						Visitor[29] has given their ticket to TicketTaker[2]
-						TicketTaker[0] has received a ticket from Visitor[27]
-						TicketTaker[27] has accepted a ticket from Visitor[0]
-						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
-						TicketTaker[1] has received a ticket from Visitor[28]
-						TicketTaker[29] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[29]
-						TicketTaker[31] has accepted a ticket from Visitor[0]
-						EValet[1] is going to sleep on the bench
-						TicketTaker[0] has received a ticket from Visitor[27]
-						TicketTaker[27] has accepted a ticket from Visitor[0]
-						ELimoDriver[9] has given their keys to ParkingValet[0] for Car[9]
-						TicketTaker[1] has received a ticket from Visitor[28]
-						TicketTaker[29] has accepted a ticket from Visitor[0]
-						ETicketTaker[2] has received a ticket from Visitor[29]
-						TicketTaker[31] has accepted a ticket from Visitor[0]
-						EValet[1] is going to sleep on the bench
-						Visitor[27] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
-						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
-						Visitor[28] has entered the Museum
-						Visitor[29] has entered the Museum
-						Visitor[27] has entered the Museum
-						Valet[0] has received the keys from LimousineDriver[189] for Car[9]
-						Valet[0] has given LimousineDriver[9] ParkingToken[9] for Car[9]
-						Visitor[28] has entered the Museum
-						Visitor[29] has entered the Museum
-						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
-						LimoDriver[9] has received ParkingToken[9] from ParkingValet[0] for Car[9]
-						Visitor[3] has left the Museum
-						Valet[9] is parking Car[9]
-						Visitor[4] has left the Museum
-						Visitor[5] has left the Museum
-						Valet[2] is going to sleep on the bench
-						Visitor[3] has left the Museum
-						Valet[9] is parking Car[9]
-						Visitor[4] has left the Museum
-						Visitor[5] has left the Museum
-						Valet[2] is going to sleep on the bench
-						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
-						LimoDriver[1] has been notified that all their Visitors have left the Museum for Car[1]
-						Valet[1] has been woken up from the bench
-						Valet[1] has been woken up from the bench
-						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
-						LimoDriver[1] has given ParkingToken[1] to ParkingValet[1] for Car[1]
-						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
-						Valet[1] has received ParkingToken[1] from LimousineDriver[1] for Car[1]
-						Visitor[6] has left the Museum
-						Visitor[7] has left the Museum
-						Visitor[8] has left the Museum
-						Visitor[6] has left the Museum
-						Visitor[7] has left the Museum
-						Visitor[8] has left the Museum
-						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
-						LimoDriver[2] has been notified that all their Visitors have left the Museum for Car[2]
-						Valet[2] has been woken up from the bench
-						Valet[2] has been woken up from the bench
-						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
-						LimoDriver[2] has given ParkingToken[2] to ParkingValet[2] for Car[2]
-						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
-						Valet[2] has received ParkingToken[2] from LimousineDriver[2] for Car[2]
-						Visitor[9] has left the Museum
-						Visitor[10] has left the Museum
-						Visitor[11] has left the Museum
-						Visitor[9] has left the Museum
-						Visitor[10] has left the Museum
-						Visitor[11] has left the Museum
-						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
-						LimoDriver[3] has been notified that all their Visitors have left the Museum for Car[3]
-						Visitor[12] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[13] has left the Museum
-						Visitor[14] has left the Museum
-						Visitor[12] has left the Museum
-						Valet[0] is going to sleep on the bench
-						Visitor[13] has left the Museum
-						Visitor[14] has left the Museum
-						ValetManager has detected four (or more cars) waiting to be parked
-						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
-						ValetManager has detected four (or more cars) waiting to be parked
-						LimoDriver[4] has been notified that all their Visitors have left the Museum for Car[4]
-						Valet[0] has been woken up from the bench
-						Valet[0] has been woken up from the bench
-						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
-						LimoDriver[0] has given ParkingToken[0] to ParkingValet[0] for Car[0]
-						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
-						Valet[0] has received ParkingToken[0] from LimousineDriver[0] for Car[0]
-						Valet[1] has given LimousineDriver[1] Car[1]
-						Valet[1] has given LimousineDriver[1] Car[1]
-						Visitor[15] has left the Museum
-						Visitor[16] has left the Museum
-						Visitor[17] has left the Museum
-						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
-						Visitor[15] has left the Museum
-						Visitor[16] has left the Museum
-						Visitor[17] has left the Museum
-						LimoDriver[1] has given a tip to ParkingValet[1] for Car[1]
-						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
-						Valet[1] has received tip from LimousineDriver[1] for Car[1]
-						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[5] has been notified that all their Visitors have left the Museum for Car[5]
-						Valet[1] has received tip from LimousineDriver[1] for Car[1]
-						Valet[1] has returned keys to LimousineDriver[1] for Car[1]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
-						LimoDriver[1] has told his visitors to get into Car[1]
-						LimoDriver[1] has received their keys from ParkingValet[1] for Car[1]
-						LimoDriver[1] has told his visitors to get into Car[1]
-						Valet[0] has given LimousineDriver[0] Car[0]
-						Visitor[2] has been told to get into Car[1]
-						Visitor[2] has gotten into Car[1] and is waiting to leave
-						Visitor[3] has been told to get into Car[1]
-						Visitor[3] has gotten into Car[1] and is waiting to leave
-						Visitor[4] has been told to get into Car[1]
-						Visitor[4] has gotten into Car[1] and is waiting to leave
-						Visitor[5] has been told to get into Car[1]
-						Visitor[5] has gotten into Car[1] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						Valet[0] has given LimousineDriver[0] Car[0]
-						Visitor[2] has been told to get into Car[1]
-						Visitor[2] has gotten into Car[1] and is waiting to leave
-						Visitor[3] has been told to get into Car[1]
-						Visitor[3] has gotten into Car[1] and is waiting to leave
-						Visitor[4] has been told to get into Car[1]
-						Visitor[4] has gotten into Car[1] and is waiting to leave
-						Visitor[5] has been told to get into Car[1]
-						Visitor[5] has gotten into Car[1] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
-						LimoDriver[1] has left the Museum in Car[1]
-						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
-						LimoDriver[0] has given a tip to ParkingValet[0] for Car[0]
-						LimoDriver[1] has left the Museum in Car[1]
-						LimoDriver[4] has given ParkingToken[4] to ParkingValet[1] for Car[4]
-						Valet[0] has received tip from LimousineDriver[0] for Car[0]
-						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
-						Valet[0] is going to sleep on the bench
-						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
-						Valet[0] has received tip from LimousineDriver[0] for Car[0]
-						Valet[0] has returned keys to LimousineDriver[0] for Car[0]
-						Valet[0] is going to sleep on the bench
-						Valet[1] has received ParkingToken[4] from LimousineDriver[4] for Car[4]
-						Visitor[18] has left the Museum
-						Valet[2] has given LimousineDriver[2] Car[2]
-						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
-						LimoDriver[0] has told his visitors to get into Car[0]
-						Visitor[19] has left the Museum
-						Visitor[20] has left the Museum
-						Visitor[18] has left the Museum
-						Valet[2] has given LimousineDriver[2] Car[2]
-						LimoDriver[0] has received their keys from ParkingValet[0] for Car[0]
-						LimoDriver[0] has told his visitors to get into Car[0]
-						Visitor[19] has left the Museum
-						Visitor[20] has left the Museum
-						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
-						Visitor[0] has been told to get into Car[0]
-						Visitor[0] has gotten into Car[0] and is waiting to leave
-						Visitor[1] has been told to get into Car[0]
-						Visitor[1] has gotten into Car[0] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
-						LimoDriver[2] has given a tip to ParkingValet[2] for Car[2]
-						Visitor[0] has been told to get into Car[0]
-						Visitor[0] has gotten into Car[0] and is waiting to leave
-						Visitor[1] has been told to get into Car[0]
-						Visitor[1] has gotten into Car[0] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[6] has been notified that all their Visitors have left the Museum for Car[6]
-						Valet[2] has received tip from LimousineDriver[2] for Car[2]
-						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
-						Valet[2] is going to sleep on the bench
-						LimoDriver[0] has left the Museum in Car[0]
-						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
-						Valet[2] has received tip from LimousineDriver[2] for Car[2]
-						Valet[2] has returned keys to LimousineDriver[2] for Car[2]
-						Valet[2] is going to sleep on the bench
-						LimoDriver[0] has left the Museum in Car[0]
-						LimoDriver[3] has given ParkingToken[3] to ParkingValet[0] for Car[3]
-						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
-						LimoDriver[2] has told his visitors to get into Car[2]
-						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
-						LimoDriver[2] has received their keys from ParkingValet[2] for Car[2]
-						LimoDriver[2] has told his visitors to get into Car[2]
-						Valet[0] has received ParkingToken[3] from LimousineDriver[3] for Car[3]
-						Visitor[6] has been told to get into Car[2]
-						Visitor[6] has gotten into Car[2] and is waiting to leave
-						Valet[2] has been woken up from the bench
-						Visitor[6] has been told to get into Car[2]
-						Visitor[6] has gotten into Car[2] and is waiting to leave
-						Valet[2] has been woken up from the bench
-						LimoDriver[2] has left the Museum in Car[2]
-						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
-						Valet[1] has given LimousineDriver[4] Car[4]
-						LimoDriver[2] has left the Museum in Car[2]
-						LimoDriver[5] has given ParkingToken[5] to ParkingValet[2] for Car[5]
-						Valet[1] has given LimousineDriver[4] Car[4]
-						Visitor[21] has left the Museum
-						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
-						Visitor[22] has left the Museum
-						Visitor[23] has left the Museum
-						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
-						Visitor[21] has left the Museum
-						Valet[2] has received ParkingToken[5] from LimousineDriver[5] for Car[5]
-						Visitor[22] has left the Museum
-						Visitor[23] has left the Museum
-						LimoDriver[4] has given a tip to ParkingValet[1] for Car[4]
-						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
-						Valet[1] has received tip from LimousineDriver[4] for Car[4]
-						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[7] has been notified that all their Visitors have left the Museum for Car[7]
-						Valet[1] has received tip from LimousineDriver[4] for Car[4]
-						Valet[1] has returned keys to LimousineDriver[4] for Car[4]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
-						LimoDriver[4] has told his visitors to get into Car[4]
-						LimoDriver[4] has received their keys from ParkingValet[4] for Car[4]
-						LimoDriver[4] has told his visitors to get into Car[4]
-						Visitor[10] has been told to get into Car[4]
-						Visitor[10] has gotten into Car[4] and is waiting to leave
-						Visitor[11] has been told to get into Car[4]
-						Visitor[11] has gotten into Car[4] and is waiting to leave
-						Visitor[12] has been told to get into Car[4]
-						Visitor[12] has gotten into Car[4] and is waiting to leave
-						Visitor[13] has been told to get into Car[4]
-						Visitor[13] has gotten into Car[4] and is waiting to leave
-						Visitor[14] has been told to get into Car[4]
-						Visitor[14] has gotten into Car[4] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						Visitor[10] has been told to get into Car[4]
-						Visitor[10] has gotten into Car[4] and is waiting to leave
-						Visitor[11] has been told to get into Car[4]
-						Visitor[11] has gotten into Car[4] and is waiting to leave
-						Visitor[12] has been told to get into Car[4]
-						Visitor[12] has gotten into Car[4] and is waiting to leave
-						Visitor[13] has been told to get into Car[4]
-						Visitor[13] has gotten into Car[4] and is waiting to leave
-						Visitor[14] has been told to get into Car[4]
-						Visitor[14] has gotten into Car[4] and is waiting to leave
-						Valet[1] has been woken up from the bench
-						Valet[0] has given LimousineDriver[3] Car[3]
-						LimoDriver[4] has left the Museum in Car[4]
-						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
-						Valet[0] has given LimousineDriver[3] Car[3]
-						LimoDriver[4] has left the Museum in Car[4]
-						LimoDriver[7] has given ParkingToken[7] to ParkingValet[1] for Car[7]
-						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
-						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
-						LimoDriver[3] has given a tip to ParkingValet[0] for Car[3]
-						Valet[1] has received ParkingToken[7] from LimousineDriver[7] for Car[7]
-						Visitor[24] has left the Museum
-						Valet[0] has received tip from LimousineDriver[3] for Car[3]
-						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
-						Valet[0] is going to sleep on the bench
-						Visitor[25] has left the Museum
-						Visitor[26] has left the Museum
-						Visitor[24] has left the Museum
-						Valet[0] has received tip from LimousineDriver[3] for Car[3]
-						Valet[0] has returned keys to LimousineDriver[3] for Car[3]
-						Valet[0] is going to sleep on the bench
-						Visitor[25] has left the Museum
-						Visitor[26] has left the Museum
-						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
-						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
-						LimoDriver[3] has told his visitors to get into Car[3]
-						LimoDriver[8] has been notified that all their Visitors have left the Museum for Car[8]
-						LimoDriver[3] has received their keys from ParkingValet[3] for Car[3]
-						LimoDriver[3] has told his visitors to get into Car[3]
-						Valet[2] has given LimousineDriver[5] Car[5]
-						Visitor[7] has been told to get into Car[3]
-						Visitor[7] has gotten into Car[3] and is waiting to leave
-						Visitor[8] has been told to get into Car[3]
-						Visitor[8] has gotten into Car[3] and is waiting to leave
-						Visitor[9] has been told to get into Car[3]
-						Visitor[9] has gotten into Car[3] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						Valet[2] has given LimousineDriver[5] Car[5]
-						Visitor[7] has been told to get into Car[3]
-						Visitor[7] has gotten into Car[3] and is waiting to leave
-						Visitor[8] has been told to get into Car[3]
-						Visitor[8] has gotten into Car[3] and is waiting to leave
-						Visitor[9] has been told to get into Car[3]
-						Visitor[9] has gotten into Car[3] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
-						LimoDriver[3] has left the Museum in Car[3]
-						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
-						LimoDriver[5] has given a tip to ParkingValet[2] for Car[5]
-						LimoDriver[3] has left the Museum in Car[3]
-						LimoDriver[6] has given ParkingToken[6] to ParkingValet[0] for Car[6]
-						Valet[2] has received tip from LimousineDriver[5] for Car[5]
-						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
-						Valet[2] is going to sleep on the bench
-						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
-						Valet[2] has received tip from LimousineDriver[5] for Car[5]
-						Valet[2] has returned keys to LimousineDriver[5] for Car[5]
-						Valet[2] is going to sleep on the bench
-						Valet[0] has received ParkingToken[6] from LimousineDriver[6] for Car[6]
-						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
-						LimoDriver[5] has told his visitors to get into Car[5]
-						LimoDriver[5] has received their keys from ParkingValet[5] for Car[5]
-						LimoDriver[5] has told his visitors to get into Car[5]
-						Visitor[27] has left the Museum
-						Visitor[15] has been told to get into Car[5]
-						Visitor[15] has gotten into Car[5] and is waiting to leave
-						Visitor[16] has been told to get into Car[5]
-						Visitor[16] has gotten into Car[5] and is waiting to leave
-						Visitor[28] has left the Museum
-						Visitor[29] has left the Museum
-						Visitor[27] has left the Museum
-						Visitor[15] has been told to get into Car[5]
-						Visitor[15] has gotten into Car[5] and is waiting to leave
-						Visitor[16] has been told to get into Car[5]
-						Visitor[16] has gotten into Car[5] and is waiting to leave
-						Visitor[28] has left the Museum
-						Visitor[29] has left the Museum
-						LimoDriver[5] has left the Museum in Car[5]
-						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
-						LimoDriver[5] has left the Museum in Car[5]
-						LimoDriver[9] has been notified that all their Visitors have left the Museum for Car[9]
-						Valet[2] has been woken up from the bench
-						Valet[1] has given LimousineDriver[7] Car[7]
-						Valet[2] has been woken up from the bench
-						Valet[1] has given LimousineDriver[7] Car[7]
-						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
-						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
-						LimoDriver[9] has given ParkingToken[9] to ParkingValet[2] for Car[9]
-						LimoDriver[7] has given a tip to ParkingValet[1] for Car[7]
-						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
-						Valet[1] has received tip from LimousineDriver[7] for Car[7]
-						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
-						Valet[1] is going to sleep on the bench
-						Valet[2] has received ParkingToken[9] from LimousineDriver[9] for Car[9]
-						Valet[1] has received tip from LimousineDriver[7] for Car[7]
-						Valet[1] has returned keys to LimousineDriver[7] for Car[7]
-						Valet[1] is going to sleep on the bench
-						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
-						LimoDriver[7] has told his visitors to get into Car[7]
-						LimoDriver[7] has received their keys from ParkingValet[7] for Car[7]
-						LimoDriver[7] has told his visitors to get into Car[7]
-						Visitor[21] has been told to get into Car[7]
-						Visitor[21] has gotten into Car[7] and is waiting to leave
-						Visitor[21] has been told to get into Car[7]
-						Visitor[21] has gotten into Car[7] and is waiting to leave
-						LimoDriver[7] has left the Museum in Car[7]
-						LimoDriver[7] has left the Museum in Car[7]
-						Valet[0] has given LimousineDriver[6] Car[6]
-						Valet[0] has given LimousineDriver[3] Car[0]
-						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
-						LimoDriver[6] has given a tip to ParkingValet[0] for Car[6]
-						Valet[0] has received tip from LimousineDriver[6] for Car[6]
-						Valet[0] has returned keys to LimousineDriver[6] for Car[6]
-						Valet[0] is going to sleep on the bench
-						Valet[0] has received tip from LimousineDriver[3] for Car[0]
-						Valet[0] has returned keys to LimousineDriver[3] for Car[0]
-						Valet[0] is going to sleep on the bench
-						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
-						LimoDriver[6] has told his visitors to get into Car[6]
-						LimoDriver[6] has received their keys from ParkingValet[6] for Car[6]
-						LimoDriver[6] has told his visitors to get into Car[6]
-						Visitor[17] has been told to get into Car[6]
-						Visitor[17] has gotten into Car[6] and is waiting to leave
-						Visitor[18] has been told to get into Car[6]
-						Visitor[18] has gotten into Car[6] and is waiting to leave
-						Visitor[19] has been told to get into Car[6]
-						Visitor[19] has gotten into Car[6] and is waiting to leave
-						Visitor[20] has been told to get into Car[6]
-						Visitor[20] has gotten into Car[6] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						Visitor[17] has been told to get into Car[6]
-						Visitor[17] has gotten into Car[6] and is waiting to leave
-						Visitor[18] has been told to get into Car[6]
-						Visitor[18] has gotten into Car[6] and is waiting to leave
-						Visitor[19] has been told to get into Car[6]
-						Visitor[19] has gotten into Car[6] and is waiting to leave
-						Visitor[20] has been told to get into Car[6]
-						Visitor[20] has gotten into Car[6] and is waiting to leave
-						Valet[0] has been woken up from the bench
-						LimoDriver[6] has left the Museum in Car[6]
-						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
-						LimoDriver[6] has left the Museum in Car[6]
-						LimoDriver[8] has given ParkingToken[8] to ParkingValet[0] for Car[8]
-						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
-						Valet[0] has received ParkingToken[8] from LimousineDriver[8] for Car[8]
-						Valet[2] has given LimousineDriver[9] Car[9]
-						Valet[2] has given LimousineDriver[9] Car[9]
-						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
-						LimoDriver[9] has given a tip to ParkingValet[2] for Car[9]
-						Valet[2] has received tip from LimousineDriver[9] for Car[9]
-						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
-						Valet[2] is going to sleep on the bench
-						Valet[2] has received tip from LimousineDriver[9] for Car[9]
-						Valet[2] has returned keys to LimousineDriver[9] for Car[9]
-						Valet[2] is going to sleep on the bench
-						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
-						LimoDriver[9] has told his visitors to get into Car[9]
-						LimoDriver[9] has received their keys from ParkingValet[9] for Car[9]
-						LimoDriver[9] has told his visitors to get into Car[9]
-						Visitor[25] has been told to get into Car[9]
-						Visitor[25] has gotten into Car[9] and is waiting to leave
-						Visitor[26] has been told to get into Car[9]
-						Visitor[26] has gotten into Car[9] and is waiting to leave
-						Visitor[27] has been told to get into Car[9]
-						Visitor[27] has gotten into Car[9] and is waiting to leave
-						Visitor[28] has been told to get into Car[9]
-						Visitor[28] has gotten into Car[9] and is waiting to leave
-						Visitor[29] has been told to get into Car[9]
-						Visitor[29] has gotten into Car[9] and is waiting to leave
-						Visitor[25] has been told to get into Car[9]
-						Visitor[25] has gotten into Car[9] and is waiting to leave
-						Visitor[26] has been told to get into Car[9]
-						Visitor[26] has gotten into Car[9] and is waiting to leave
-						Visitor[27] has been told to get into Car[9]
-						Visitor[27] has gotten into Car[9] and is waiting to leave
-						Visitor[28] has been told to get into Car[9]
-						Visitor[28] has gotten into Car[9] and is waiting to leave
-						Visitor[29] has been told to get into Car[9]
-						Visitor[29] has gotten into Car[9] and is waiting to leave
-						LimoDriver[9] has left the Museum in Car[9]
-						LimoDriver[9] has left the Museum in Car[9]
-						Valet[0] has given LimousineDriver[8] Car[8]
-						Valet[0] has given LimousineDriver[8] Car[8]
-						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
-						LimoDriver[8] has given a tip to ParkingValet[0] for Car[8]
-						Valet[0] has received tip from LimousineDriver[8] for Car[8]
-						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
-						Valet[0] is going to sleep on the bench
-						Valet[0] has received tip from LimousineDriver[8] for Car[8]
-						Valet[0] has returned keys to LimousineDriver[8] for Car[8]
-						Valet[0] is going to sleep on the bench
-						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
-						LimoDriver[8] has told his visitors to get into Car[8]
-						LimoDriver[8] has received their keys from ParkingValet[8] for Car[8]
-						LimoDriver[8] has told his visitors to get into Car[8]
-						Visitor[22] has been told to get into Car[8]
-						Visitor[22] has gotten into Car[8] and is waiting to leave
-						Visitor[23] has been told to get into Car[8]
-						Visitor[23] has gotten into Car[8] and is waiting to leave
-						Visitor[24] has been told to get into Car[8]
-						Visitor[24] has gotten into Car[8] and is waiting to leave
-						Visitor[22] has been told to get into Car[8]
-						Visitor[22] has gotten into Car[8] and is waiting to leave
-						Visitor[23] has been told to get into Car[8]
-						Visitor[23] has gotten into Car[8] and is waiting to leave
-						Visitor[24] has been told to get into Car[8]
-						Visitor[24] has gotten into Car[8] and is waiting to leave
-						LimoDriver[8] has left the Museum in Car[8]
-						LimoDriver[8] has left the Museum in Car[8]
-						No threads ready or runnable, and no pending interrupts.
-						Assuming the program completed.
-						Machine halting!
+			Ticks: total 5111, idle 0, system 1240, user 3871
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 0, sent 0
 						
-						Ticks: total 349327, idle 0, system 86750, user 262577
-						Disk I/O: reads 0, writes 0
-						Console I/O: reads 0, writes 0
-						Paging: faults 0
-						Network I/O: packets received 0, sent 0
-						
-						Cleaning up...
+			Cleaning up...
 
+	CreateLock:
+	- Tests the CreateLock_Syscall and server by creating a lock, which
+	succeeds. Then it attempts to create another lock with the same name,
+	but the server returns the index of the previous lock as it should. 
+	Finally, the test creates another lock with a different name, which 
+	succeeds.
+			
+	Test output:
+		Test: 
+			Num Pages: 13
+			Num Pages: 19
+			Exit value: 0 
+			Test is creating a lock named lock1
+			Lock created successfully at index 00		
+			Test is creating another lock named lock1
+			Lock already exists at index 00
+			Test is creating another lock named lock2
+			Lock created successfully at index 01
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 23788, idle 22043, system 1540, user 205
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 3, sent 3
+			
+			Cleaning up...
+			
+		Server:
+			Server has received a message: CL lock1 5 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CL lock1 5 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CL lock2 5 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
 
+			Cleaning up...
 
+	DestroyLock:
+	- The test attempts to destroy locks at two invalid indexes. Then it creates
+	a lock successfully, acquires it, releases it, and destroys it.
+	
+	Test output:
+	
+		Test:	
+			Num Pages: 22
+			
+			Test is attempting to destroy a lock at index -1
+			Lock not set to be destroyed
+			
+			Test is attempting to destroy a lock at index 200
+			Lock not set to be destroyed
+			
+			Test is creating a lock at index 0
+			Lock created successfully at index 0
+			
+			Test is acquiring lock at index 0
+			Lock acquired successfully from index 0
+			
+			Test is releasing lock at index 0
+			Lock released successfully from index 0
+			
+			Test is attempting to destroy previously released lock at index 0
+			Lock at index 0 set to be destroyed
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 21693, idle 19384, system 2070, user 239
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 5, sent 5
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: DL DestroyLock -1 -1 -1
+			Server has decoded DestroyLock request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DL DestroyLock 200 -1 -1
+			Server has decoded DestroyLock request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CL test 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DL DestroyLock 0 -1 -1
+			Server has decoded DestroyLock request from machine1 mailbox0 
+			Server has received valid lock index from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+			
+	AcquireLock:
+	- The test tries to acquire a lock at two invalid indexes, then creates a
+	lock and acquires it successfully. It tries to reacquire the lock, which
+	fails. Then it releases the lock and destroys it successfully. Finally, the
+	test tries to acquire the destroyed lock again, which fails.
+	
+	Test output:
+		Test:
+			Num Pages: 26
+			
+			Test is attempting to acquire lock at index -1
+			Lock not acquired
+			
+			Test is attempting to acquire lock at index 200
+			Lock not acquired
+			
+			Test is creating lock at index 0
+			Lock created successfully at index 0
+			
+			Test is acquiring lock at index 0
+			Lock acquired successfully from index 0
+			
+			Test is attempting to reacquire lock at index 0
+			Lock not acquired
+			
+			Test is releasing lock at index 0
+			Lock released successfully from index 0
+			
+			Test is attempting to destroy the lock at index 0
+			LoLock at index 0 destroyed successfully
+			
+			Test is attempting to acquire lock at index 0
+			Lock not acquired
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 28776, idle 25107, system 3300, user 369
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 8, sent 8
+			
+			Cleaning up...
+			
+		Server:
+			Server has received a message: AQ Acquire -1 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 200 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CL test 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			Server has received request to reacquire lock already owned by 
+			machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DL DestroyLock 0 -1 -1
+			Server has decoded DestroyLock request from machine1 mailbox0 
+			Server has received valid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			Server has received index of deleted lock from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+
+	ReleaseLock:
+	- The test tries to release a lock at two invalid indexes, then creates a
+	lock and attempts to release it before acquiring it, which fails. The test
+	then acquires and releases the lock successfully. The test destroys the lock
+	successfully. Finally, the test tries to release the destroyed lock again,
+	which fails.
+	
+	Test output:
+		Test:
+			Num Pages: 27
+			
+			Test is attempting to release a lock at index -1
+			Lock not released
+			
+			Test is attempting to release a lock at index 200
+			Lock not released
+			
+			Test is creating a lock at index 0
+			Lock created successfully at index 0
+			
+			Test is attempting to release lock at index 0 without acquiring
+			Lock not released
+			
+			Test is acquiring lock at index 0
+			Lock acquired successfully from index 0
+			
+			Test is releasing lock at index 0
+			Lock at index 0 released successfully
+			
+			Test is destroying previously released lock at index 0
+			Lock at index 0 set to be destroyed
+			
+			Test is attempting to release previously destroyed lock at index 0
+			Lock not released
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 29733, idle 26248, system 3120, user 365
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 8, sent 8
+			
+			Cleaning up...
+			
+		Server:
+			Server has received a message: RL Release -1 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 200 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			Server has received invalid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CL test 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			Server has received request to release lock at index 0 not owned by
+			machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DL DestroyLock 0 -1 -1
+			Server has decoded DestroyLock request from machine1 mailbox0 
+			Server has received valid lock index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox0 
+			Server has received index of deleted lock from machine1 mailbox0
+			-----------------------------------------------
+
+			Cleaning up...
+
+	CreateCondition:
+	- The test creates a condition successfully, then attempts to create another
+	condition with the same name. The server returns the index of the existing 
+	condition, as it should. Then the test creates another condition with a
+	different name, which succeeds.
+	
+	Test output:
+		Test:
+			Num Pages: 13
+			Num Pages: 20
+			Exit value: 0 
+			----------------------------------
+			Beginning CreateCondition test.
+			----------------------------------
+			Test is creating a condition named condition1
+			Condition created successfully at index 00
+			----------------------------------
+			Test is attempting to create another condition named condition1
+			Condition already exists at index 00
+			c----------------------------------
+			Test is creating another condition named condition2
+			Condition created successfully at index 01
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 18835, idle 16628, system 1950, user 257
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 3, sent 3
+			
+			Cleaning up...
+
+		Server:
+		Server has received a message: CC condition1 11 -1 -1
+		Server has decoded CreateCondition request from machine1 mailbox0
+		-----------------------------------------------
+		Server has received a message: CC condition1 11 -1 -1
+		Server has decoded CreateCondition request from machine1 mailbox0 
+		-----------------------------------------------
+		Server has received a message: CC condition2 11 -1 -1
+		Server has decoded CreateCondition request from machine1 mailbox0 
+		-----------------------------------------------
+
+		Cleaning up...
+
+	DestroyCondition:
+	- The test attempts to destroy a condition which hasn't been created, which
+	fails. Next it creates a condition and destroys it successfully. It then 
+	tries to destroy the condition again, which fails.
+	
+	Test output:
+		Test:
+			Num Pages: 21
+			----------------------------------
+			Beginning DestroyCondition test
+			----------------------------------
+			Test is attempting to destroy a condition that hasn't been created
+			CCondition not destroyed
+			----------------------------------
+			Test is creating a condition named condition1
+			Condition created successfully at index 00
+			----------------------------------
+			Test is destroying condition1
+			Condition destroyed successfully at index 00
+			T----------------------------------
+			Test is attempting to destroy condition1 again
+			Condition destroyed successfully at index 00
+			TExit value: 0 
+			Machine halting!
+			
+			Ticks: total 22904, idle 20467, system 2180, user 257
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 4, sent 4
+			
+			Cleaning up...
+
+		Server:
+			Server has received a message: DC DestroyCV 0 -1 -1
+			Server has decoded DestroyCondition request from machine1 mailbox0 
+			Server has received invalid condition index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CC condition1 11 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DC DestroyCV 0 -1 -1
+			Server has decoded DestroyCondition request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DC DestroyCV 0 -1 -1
+			Server has decoded DestroyCondition request from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+
+	Wait:
+	- First tests various invalid indexes for both the lock and condition, which
+	fails until given a correct index (non-normative test). Then begins a test
+	with one waiting thread and one signaller, which proceeds normally and
+	succeeds (normative test).
+	
+	Test output:
+		Test:
+			Num Pages: 13
+			Num Pages: 26
+			----------------------------------
+			Beginning non-normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is waiting before acquiring the lock
+			Thread 1 not able to wait on the CV
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting with an invalid CV index
+			Thread 1 not able to wait on the CV
+			Thread 1 is waiting with an invalid lock index
+			TThread 1 not able to wait on the CV
+			Thread 1 is waiting on a signal
+			Thread 2 is acquiring the lock
+			Thread 2 is signalling the waiter
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Num Pages: 23
+			Exit value: 0 
+			----------------------------------
+			Beginning normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting on a signal
+			Thread 2 is acquiring the lock
+			Thread 2 is signalling the waiter
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 95333, idle 6673, system 69130, user 19530
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 19, sent 19
+			
+			Cleaning up...
+
+		Server:
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox1 
+			Server has received request to wait on condition at index 0, but 				lock not owned by machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: WT Wait -1 0 -1
+			Server has decoded Wait request from machine1 mailbox1 
+			Server has received invalid condition index from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 -1 -1
+			Server has decoded Wait request from machine1 mailbox1 
+			Server has received invalid lock index from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has d	ecoded Wait request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 0 -1
+			Server has decoded Signal request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 0 -1
+			Server has decoded Signal request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox4 
+			-----------------------------------------------
+
+			Cleaning up...
+
+	Signal:	
+	-  Tests signalling on various invalid indexes for both the lock and
+	condition, which fails until given a correct index (non-normative test).
+	Then begins a test with one waiting thread and one signaller, which proceeds
+	normally and succeeds (normative test).
+	
+	Test output:
+		Test:
+			Num Pages: 13
+			Num Pages: 26
+			----------------------------------
+			Beginning non-normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting on a signal
+			Thread 2 is signalling the waiter before acquiring the lock
+			Thread 2 not able to signal on the CV
+			Thread 2 is acquiring the lock
+			Thread 2 is signalling the waiter with an invalid CV index
+			TThread 2 not able to signal on the CV
+			Thread 2 is signalling the waiter with an invalid lock index
+			Thread 2 not able to signal on the CV
+			Thread 2 is signalling the waiter
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Num Pages: 23
+			Exit value: 0 
+			----------------------------------
+			Beginning normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting on a signal
+			Thread 2 is acquiring the lock
+			Thread 2 is signalling the waiter
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 63196, idle 6373, system 43170, user 13653
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 19, sent 19
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 0 -1
+			Server has decoded Signal request from machine1 mailbox2 
+			Server has received request to signal on condition at index 0, but 				lock not owned by machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: SG Signal -1 0 -1
+			Server has decoded Signal request from machine1 mailbox2 
+			Server has received invalid condition index from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 -1 -1
+			Server has decoded Signal request from machine1 mailbox2 
+			Server has received invalid lock index from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 0 -1
+			Server has decoded Signal request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: SG Signal 0 0 -1
+			Server has decoded Signal request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox4 
+			-----------------------------------------------
+
+			Cleaning up...
+		
+	Broadcast:
+	- Tests broadcasting on various invalid indexes for both the lock and
+	condition, which fails until given a correct index (non-normative test).
+	Then begins a test with two waiting threads and one broadcaster, which
+	proceeds normally and succeeds (normative test).
+					
+	Test output:
+		Test:
+			Num Pages: 13
+			Num Pages: 34
+			----------------------------------
+			Beginning non-normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting on a signal
+			Thread 2 is acquiring the lock
+			Thread 2 is waiting on a signal
+			Thread 3 is broadcasting before acquiring the lock
+			TThread 3 not able to broadcast on the CV
+			Thread 3 is acquiring the lock
+			Thread 3 is broadcasting with an invalid CV index
+			Thread 3 not able to broadcast on the CV
+			Thread 3 is broadcasting with an invalid lock index
+			Thread 3 not able to broadcast on the CV
+			Thread 3 is broadcasting with a null CV index
+			Thread 3 not able to broadcast on the CV
+			Thread 3 is broadcasting with a null lock index
+			Thread 3 not able to broadcast on the CV
+			Thread 3 is broadcasting the waiters
+			Thread 3 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Thread 2 has been signalled
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Num Pages: 28
+			Exit value: 0 
+			----------------------------------
+			Beginning normative test
+			----------------------------------
+			Exit value: 0 
+			Thread 1 is acquiring the lock
+			Thread 1 is waiting on a signal
+			Thread 2 is acquiring the lock
+			Thread 2 is waiting on a signal
+			Thread 3 is acquiring the lock
+			Thread 3 is broadcasting
+			Thread 3 is releasing the lock
+			Exit value: 0 
+			Thread 1 has been signalled
+			Thread 1 is releasing the lock
+			Exit value: 0 
+			Thread 2 has been signalled
+			Thread 2 is releasing the lock
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 178216, idle 7664, system 140110, user 30442
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 27, sent 27
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 0 0 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			Server has received request to broadcast on condition at index 0, 				but lock not owned by machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast -1 0 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			Server has received invalid condition index from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 0 -1 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			Server has received invalid lock index from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 50 0 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			Server has received invalid condition index from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 0 50 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			Server has received invalid lock index from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 0 0 -1
+			Server has decoded Broadcast request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox3 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox1 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox2 
+			-----------------------------------------------
+			Server has received a message: CL lock 4 -1 -1
+			Server has decoded CreateLock request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: CC CV 2 -1 -1
+			Server has decoded CreateCondition request from machine1 mailbox4 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox6 
+			-----------------------------------------------
+			Server has received a message: WT Wait 0 0 -1
+			Server has decoded Wait request from machine1 mailbox6 
+			-----------------------------------------------
+			Server has received a message: AQ Acquire 0 -1 -1
+			Server has decoded Acquire request from machine1 mailbox7 
+			-----------------------------------------------
+			Server has received a message: BC Broadcast 0 0 -1
+			Server has decoded Broadcast request from machine1 mailbox7 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox7 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox5 
+			-----------------------------------------------
+			Server has received a message: RL Release 0 -1 -1
+			Server has decoded Release request from machine1 mailbox6 
+			-----------------------------------------------
+
+			Cleaning up...
+			
+	CreateMV:
+	- This test first creates a new monitor variable but gives an invalid size 
+	of 0. Then it makes a monitor variable of size 1, which is successful.
+	Then it attempts to create another monitor variable with the same name as
+	the monitor variable already created. The server returns the same index of 
+	the first variable, as it should.
+	
+	Test output:
+		Test:
+			Num Pages: 18
+			Test is creating an MV named mv with size 0
+			MV not created
+			Test is creating an MV named mv with size 1
+			MV created successfully at index 00
+			Test is creating another MV named mv with size 1
+			MV created successfully at index 00
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 16962, idle 15333, system 1470, user 159
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 3, sent 3
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: CM mv 5 0 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			Server has received invalid array size from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CM mv 5 1 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CM mv 5 1 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+		
+	DestroyMV:
+	- This test first tries to destroy a monitor variable at two invalid
+	indexes, which fails. Then it creates and destroys a monitor variable 
+	successfully.
+	
+	Test output:
+		Test:
+			Num Pages: 19
+			Test is trying to destroy an MV at index -1
+			MV not destroyed
+			Test is trying to destroy an MV at index 501
+			MV not destroyed
+			Test is creating an MV named mv
+			MV created successfully at index 00
+			Test is trying to destroy an MV at index 0
+			MV destroyed successfully at index 00
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 18608, idle 16627, system 1790, user 191
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 4, sent 4
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: DM DestroyMV -1 -1 -1
+			Server has decoded DestroyMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DM DestroyMV 501 -1 -1
+			Server has decoded DestroyMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CM mv 5 1 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: DM DestroyMV 0 -1 -1
+			Server has decoded DestroyMV request from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+	
+	GetMV:
+	- This test first tries to get an uninitialized monitor variable, and then
+	tries to get monitor variables at invalid indexes, which fails. Then the 
+	test creates a monitor variable and sets its value to 5. The test attempts
+	to get the value of the monitor variable using the wrong indexes again, then
+	gets the value successfully using the correct index.
+	
+	Test output:
+		Test:
+			Num Pages: 25
+			Test is getting uninitialized MV
+			MV not gotten
+			Test is getting invalid MV (-1)
+			MV not gotten
+			Test is getting invalid MV (550)
+			MV not gotten
+			Test is creating an MV named mv
+			MV created successfully at index 00
+			Test is setting mv[1] to be 5
+			mv[1] was set to be 5
+			Test is getting mv[-1]
+			mv[-1] not gotten
+			Test is getting mv[590]
+			mv[590] not gotten
+			Test is getting mv[1]
+			mv[1] is 5
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 24128, idle 21061, system 2730, user 337
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 8, sent 8
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: GM GetMV 0 1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV -1 1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV 550 1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CM mv 5 5 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV 0 1 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV 0 -1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			Server has received invalid MV array index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV 0 590 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			Server has received invalid MV array index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV 0 1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
+			
+	SetMV:
+	- This test first tries to set an uninitialized monitor variable, and then
+	tries to set monitor variables at invalid indexes, which fails. Then the 
+	test creates a monitor variable successfully. The test attempts to set the
+	value of the monitor variable using the wrong indexes again, then
+	sets the value successfully using the correct index. The test gets the 
+	value of the monitor variable as proof that it was set correctly.
+	
+	Test output:
+		Test:
+			Num Pages: 24
+			Test is setting a non-existent MV to be 5
+			MV not set
+			Test is setting an invalid MV (-1) to be 5
+			MV not set
+			Test is setting an invalid MV (700) to be 5
+			MV not set
+			Test is creating an MV named mv
+			MV created successfully at index 00
+			Test is setting mv[-1] to be 5
+			mv[-1] not set
+			Test is setting mv[600] to be 5
+			mv[600] not set
+			Test is setting mv[1] to be 5
+			mv[1] was set to be 5
+			Test is getting mv[1]
+			mv[1] is 5
+			Exit value: 0 
+			Machine halting!
+			
+			Ticks: total 26416, idle 23159, system 2910, user 347
+			Disk I/O: reads 0, writes 0
+			Console I/O: reads 0, writes 0
+			Paging: faults 0
+			Network I/O: packets received 8, sent 8
+			
+			Cleaning up...
+		
+		Server:
+			Server has received a message: SM SetMV 1 0 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV -11 0 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV 700 0 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			Server has received invalid MV index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: CM mv 5 5 -1
+			Server has decoded CreateMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV 0 -1 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			Server has received invalid MV array index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV 0 600 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			Server has received invalid MV array index from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: SM SetMV 0 1 5
+			Server has decoded SetMV request from machine1 mailbox0 
+			-----------------------------------------------
+			Server has received a message: GM GetMV 0 1 -1
+			Server has decoded GetMV request from machine1 mailbox0 
+			-----------------------------------------------
+
+			Cleaning up...
 
 VI. Discussion
-
-	Experiment 
-	expectation:
-					We expect that the system calls will work properly, of
-					course. The stress test - running two museums - should
-					also work in the sense that two museums running concurrently
-					should not interfere with each other, cause errors, or 
-					otherwise behave differently than a single museum running
-					within the operating system. Of course there will be
-					differences in the program, but these should not be apparent
-					to the user. 
-					
-	Experiment
-	result:			The museum simulation works very well, especially in a 
-					uniprogrammed environment. We saw no issues running the 
-					converted museum code as a single process. We did see some
-					problems with running the museum in a multiprogrammed 
-					environment. Running two museums concurrently revealed some 
-					flaws within our design.
+	Experiment Expectation:
+		Part 1 & 2:
+			We expect the the program to properly manage the memory on a Page
+			Fault Exception. We want to evict the appropriate pages from the
+			IPT and TLB. We should write necessary data to the swap file as
+			well. More than one program should be able to run without 
+			interfering with each other's space.
+		Part 3
+			We expect our system calls to send the Server an appropriate
+			message. The server in turn should parse the message and send
+			back the appropriate reply. The system call in return should get 
+			a return value and return it if necessary. We need to be able to 
+			create MVs as well as our original system calls.
 	
-	Explanation:		We first dealt with a simple problem - not enough physical
-					pages! After increasing numPhysPages sufficiently, we 
-					discovered that the index variable for the lock table was a 
-					global in exception.cc - bad news! After changing that, 
-					and fixing some problems with the indexes that were given to
-					each museum function (Visitor(), CarDriver(), etc.), we 
-					realized that there are some existing race conditions in the
-					museum. These race conditions are rare enough that they
-					don't show up in our tests in a uniprogrammed environment,
-					but the additional context switching that results from a 
-					multiprogrammed environment is enough to show that these 
-					race conditions can occasionally rear their ugly heads. We
-					estimate that the race conditions appear in 10% of our
-					multiprogrammed tests. 
-					
+	Experiment Results
+		Everything works as expected. Memory is properly managed and no 
+		program interferes with the other. Page evictions happen and we do not
+		lose data. Our system calls also communicate with the server, and the 
+		server in turn replies and gets the appropriate message back. The 
+		server also does the appropriate code it needs to per system call.
+	
+	Explanation
+		We ran into some problems along the way. We lost a lot of information
+		by deleting pointers, and thus we were losing where things were in 
+		memory. We also solved a major error by finding we were reading from
+		the incorrect byte offset. We were reading off the inappropriate page
+		table and thus mixing the data.
 
 VII. Miscellaneous
-
-	We wrote bash scripts to do most of the conversion from C++ to C code using
-	the syscalls, though our knowledge of scripting is quite limited. For this
-	reason, the museum code is badly formatted (not indented, multiple
-	statements on one line, etc.). We apologize for the lack of readability 
-	and are willing to provide the scripts we used if necessary.
+	The project was much harder and required a lot of debugging compared to our
+	second project, but we actually feel more confident in the final product. 
+	Virtual memory is pretty hard to debug, as it turns out. 
+	

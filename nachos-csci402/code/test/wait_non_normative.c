@@ -29,18 +29,6 @@ void wait_non_norm(){
 		Printx("Thread 1 not able to wait on the CV\n",36,1);
 	}
 	
-	Printx("Thread 1 is waiting with a null CV index\n",43,1);
-	returnValue = Wait((CV + 50), lock);
-	if(returnValue == -1){ 
-		Printx("Thread 1 not able to wait on the CV\n",36,1);
-	}
-	
-	Printx("Thread 2 is waiting with a null lock index\n",45,1);
-	returnValue = Wait(CV, (lock + 50));
-	if(returnValue == -1){ 
-		Printx("Thread 1 not able to wait on the CV\n",36,1);
-	}
-	
 	Printx("Thread 1 is waiting on a signal\n",32,1);
 	returnValue = Wait(CV, lock);
 	if(returnValue == -1){ 

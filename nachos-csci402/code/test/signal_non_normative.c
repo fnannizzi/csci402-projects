@@ -58,7 +58,7 @@ void signal_waiter_non_norm(){
 		Printx("Thread 2 not able to signal on the CV\n",38,1);
 	}
 	
-	Printx("Thread 2 is signalling the waiter with a null CV index\n",57,1);
+	/*Printx("Thread 2 is signalling the waiter with a null CV index\n",57,1);
 	returnValue = Signal((CV + 50), lock);
 	if(returnValue == -1){ 
 		Printx("Thread 2 not able to signal on the CV\n",38,1);
@@ -68,7 +68,7 @@ void signal_waiter_non_norm(){
 	returnValue = Signal(CV, (lock + 50));
 	if(returnValue == -1){ 
 		Printx("Thread 2 not able to signal on the CV\n",38,1);
-	}
+	}*/
 	
 	Printx("Thread 2 is signalling the waiter\n",34,1);
 	returnValue = Signal(CV, lock);

@@ -34,7 +34,6 @@ main()
 		 		C[i][j] += A[i][k] * B[k][j];
 			}
 		}
-		Printx("Looping\n",9,1); 
 	}
     Exit(C[Dim-1][Dim-1]);		/* and then we're done */
 }

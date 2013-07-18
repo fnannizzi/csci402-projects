@@ -126,7 +126,7 @@ MailBox::Get(PacketHeader *pktHdr, MailHeader *mailHdr, char *data)
     DEBUG('n', "Waiting for mail in mailbox\n");
     Mail *mail = (Mail *) messages->Remove();	// remove message from list;
 						// will wait if list is empty
-
+	DEBUG('n', "MAIL in mailbox\n");
     *pktHdr = mail->pktHdr;
     *mailHdr = mail->mailHdr;
     if (DebugIsEnabled('n')) {

@@ -2,7 +2,12 @@
 int a[3];
 int b, c;
 int i;
-void print0() {Printx("Test0\n",6,1);Exit(0);}
+void print0(){
+	Write("Test0\n", 6, ConsoleOutput ); 
+	/*Printx("Test0\n",6,1);*/ 
+	Exit(0);
+}
+
 void print1() {Printx("Test1\n",6,1);Exit(0);}
 void print2() {
 Printx("Test2\n",6,1);

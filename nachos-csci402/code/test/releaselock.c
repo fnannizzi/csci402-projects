@@ -21,18 +21,18 @@ main()
    	 Printx("Lock not released\n",18,1);
     else
     	Printx("Lock at index %d released successfully\n",39,lock*10000000);
-    
+/*    
     Printx("\nTest is attempting to release a null lock at index 0\n",54,1);
     lock = Release(0);
     if (lock == -1)
    	 Printx("Lock not released\n",18,1);
     else
     	Printx("Lock at index %d released successfully\n",39,lock*10000000);
-    	
+*/    	
     Printx("\nTest is creating a lock at index 0\n",36,1);
     lock = CreateLock(name,4);
     if (lock == -1)
-   	 Printx("Lock ran into a problem\n",24,1);
+   	 	Printx("Lock not created\n",19,1);
     else
     	Printx("Lock created successfully at index %d\n",38,lock*10000000);
     	
@@ -56,17 +56,27 @@ main()
    	 Printx("Lock not released\n",18,1);
     else
     	Printx("Lock at index %d released successfully\n",39,lock*10000000);
+    	
+    	
+   	Printx("\nTest is destroying previously released lock at index 0\n",59,1);
+    lock = DestroyLock(0);
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+    }
+    else {
+    	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
+    }
     
-    Printx("\nTest is attempting to release previously released lock at index 0\n",67,1);
+    Printx("\nTest is attempting to release previously destroyed lock at index 0\n",71,1);
     lock = Release(0);
     if (lock == -1)
    	 Printx("Lock not released\n",18,1);
     else
     	Printx("Lock at index %d released successfully\n",39,lock*10000000);
-    	
+/*    	
     Exec("../test/releaselock1",20);
     Exec("../test/releaselock2",20);
     Exec("../test/releaselock3",20);
-    
+*/    
     /* not reached */
 }

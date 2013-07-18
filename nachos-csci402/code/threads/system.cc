@@ -7,13 +7,19 @@
 
 #include "copyright.h"
 #include "system.h"
+#include <sstream>
 
-#define NumPhysPages	55 //Added this too
+#define NumPhysPages	32 //Added this too
 #define NumSwapPages	10000
 
-// Added new classes and methods
+//----------------------------------------------------------------------
+// InvertedPageTable::InvertedPageTable
+// Constructor for IPT class, initializes important data to be null or
+// invalid
+//----------------------------------------------------------------------
 InvertedPageTable::InvertedPageTable(){
 	table = new IPTTranslationEntry[NumPhysPages];
+	queue = new List();
 	for (int i = 0; i < NumPhysPages; i++){
 		table[i].virtualPage = NULL;
     	table[i].physicalPage = NULL;
@@ -21,10 +27,18 @@ InvertedPageTable::InvertedPageTable(){
 	}
 }
 
+//----------------------------------------------------------------------
+// InvertedPageTable::~InvertedPageTable
+// Destructor for IPT class, just needs to delete the table. 
+//----------------------------------------------------------------------
 InvertedPageTable::~InvertedPageTable(){
 	delete table;
 }
 
+//----------------------------------------------------------------------
+// InvertedPageTable::print
+// Prints the IPT entries for debugging purposes.
+//----------------------------------------------------------------------
 void InvertedPageTable::print(){
     for(int i = 0; i < NumPhysPages; i++){
     	DEBUG('a', "IPT entry: %d\n", i);
@@ -36,10 +50,16 @@ void InvertedPageTable::print(){
     }
 }
 
+//----------------------------------------------------------------------
+// InvertedPageTable::searchForEntry
+// Find an entry in the IPT by matching the virtual page number and 
+// process ID, entry must also be valid.
+//----------------------------------------------------------------------
 int InvertedPageTable::searchForEntry(int vpn, int processID){
 	int index = -1;
 	for(int i = 0; i < NumPhysPages; i++){
-		if(table[i].virtualPage == vpn){		
+		if(table[i].virtualPage == vpn){
+		//printf("Process comparison: %i vs %i\n",table[i].processID,processID);		
 			if(table[i].processID == processID){
 				if(table[i].valid){
 					index = i;
@@ -52,6 +72,11 @@ int InvertedPageTable::searchForEntry(int vpn, int processID){
 	return index;
 }
 
+//----------------------------------------------------------------------
+// InvertedPageTable::searchForEmptyEntry
+// Find an empty entry in the IPT if one is available. Otherwise, return
+// -1 and make HandlePageFault() evict a page. 
+//----------------------------------------------------------------------
 int InvertedPageTable::searchForEmptyEntry(){
 	int index = -1;
 	for(int i = 0; i < NumPhysPages; i++){
@@ -64,15 +89,28 @@ int InvertedPageTable::searchForEmptyEntry(){
 	return index;
 }
 
+//----------------------------------------------------------------------
+// InvertedPageTable::updateEntry
+// Update an IPT entry with the given data. 
+//----------------------------------------------------------------------
 void InvertedPageTable::updateEntry(int index, int vaddr, int process, bool validBit){
 	table[index].virtualPage = vaddr;
 	table[index].physicalPage = index;
 	table[index].processID = process;
 	table[index].valid = validBit;
+	table[index].dirty = FALSE;
+	//(2)
+	table[index].use = TRUE;
+	table[index].readOnly = FALSE;
+	queue->Append((void*)index);
 }
 
-int InvertedPageTable::chooseEvictionPage(){
-	time_t oldestTime = table[0].timestamp;
+//----------------------------------------------------------------------
+// InvertedPageTable::chooseEvictionPageLRU
+// Choose a page to evict from the IPT based on when it was last used.
+//----------------------------------------------------------------------
+int InvertedPageTable::chooseEvictionPageLRU(){
+	/*time_t oldestTime = table[0].timestamp;
 	int oldestIndex = 0;
 	for(int i = 0; i < NumPhysPages; i++){
 		if(table[i].timestamp < oldestTime){ // page is older
@@ -80,7 +118,65 @@ int InvertedPageTable::chooseEvictionPage(){
 			oldestIndex = i;
 		}
 	}
-	return oldestIndex;
+	return oldestIndex;*/
+	int index = (int)queue->Remove();
+	return index;
+}
+
+//----------------------------------------------------------------------
+// InvertedPageTable::chooseEvictionPageRandom
+// Choose a page to evict from the IPT randomly.
+//----------------------------------------------------------------------
+int InvertedPageTable::chooseEvictionPageRandom(){
+	srand(time(NULL));
+	//(1)
+	int randomIndex = -1;
+	while (randomIndex == -1)
+	{
+		randomIndex = rand() % NumPhysPages;
+		if (table[randomIndex].use)
+			randomIndex = -1;
+	}
+	return randomIndex;
+}
+
+//----------------------------------------------------------------------
+// msgPrepare
+// Create a char* msg from a Message object
+//----------------------------------------------------------------------
+char* msgPrepare(Message* msg){
+	stringstream ss;
+	ss << msg->request[0];
+	ss << msg->request[1];
+	ss << ' ';
+	ss << msg->name;
+	ss << ' ';
+	ss << msg->index;
+	ss << ' ';
+	ss << msg->index2; 
+	ss << ' ';
+	ss <<  msg->index3;
+	char* d = new char[MaxMailSize];
+	strcpy(d, ss.str().c_str());
+	return d;
+}
+
+//----------------------------------------------------------------------
+// decodeMessage
+// Create a message object from a char*
+//----------------------------------------------------------------------
+Message* decodeMessage(char* buf){
+	Message* message = new Message;
+	message->request = new char[2];
+	message->name = new char[20];
+	stringstream ss;
+	ss << buf;
+	ss >> message->request;
+	ss >> message->name;
+	ss >> message->index;
+	ss >> message->index2;
+	ss >> message->index3;
+	return message;
 }
 
 // This defines *all* of the global data structures used by Nachos.
@@ -92,10 +188,14 @@ Scheduler *scheduler;			// the ready list
 Interrupt *interrupt;			// interrupt status
 Statistics *stats;				// performance metrics
 Timer *timer;					// the hardware timer device for invoking context switches
-InvertedPageTable *ipt; 
-OpenFile* swapFile;
-int nextTLB;
-
+InvertedPageTable *ipt; 		// inverted page table used to track pages in memory
+OpenFile* swapFile;				// swap file that stores dirty pages which have been evicted from memory
+BitMap* swapFileMap;			// used to track open pages in swap file
+Lock* iptLock;					// lock on IPT to prevent race conditions
+int nextTLB;					// next entry of the TLB to be written to
+int ** swapArray;
+int ** pageLocation;
+PageReplacementPolicy pageReplacementPolicy; // choose between FIFO or RAND replacement
 
 #ifdef FILESYS_NEEDED
 FileSystem  *fileSystem;
@@ -228,9 +328,16 @@ Initialize(int argc, char **argv)
     CallOnUserAbort(Cleanup);			// if user hits ctl-C
     
 #ifdef USER_PROGRAM
+    DEBUG('a', "USER_PROGRAM flags set \n");
     machine = new Machine(debugUserProg);	// this must come first
     pageMap = new BitMap(NumPhysPages);	// Need to make sure this is updated
-    DEBUG('a', "USER_PROGRAM flags set \n");
+    
+    // Initialize the TLB
+	for (int i = 0; i < TLBSize; i++){
+    	machine->tlb[i].virtualPage = NULL;
+    	machine->tlb[i].physicalPage = NULL;
+		machine->tlb[i].valid = FALSE;
+	}
 #endif
 
 #ifdef FILESYS
@@ -239,27 +346,37 @@ Initialize(int argc, char **argv)
 
 #ifdef FILESYS_NEEDED
     fileSystem = new FileSystem(format);
+    DEBUG('a', "FILESYS flags set \n");
 #endif
 
 #ifdef NETWORK
     postOffice = new PostOffice(netname, rely, 10);
+	DEBUG('a', "NETWORK flags set \n");
 #endif
-
 
 	// Added virtual memory objects 
 	ipt = new InvertedPageTable();
+	iptLock = new Lock("iptLock");
+	swapFileMap = new BitMap(NumSwapPages);
 	nextTLB = 0;
-	
-	for (int i = 0; i < TLBSize; i++){
-    	machine->tlb[i].virtualPage = NULL;
-    	machine->tlb[i].physicalPage = NULL;
-		machine->tlb[i].valid = FALSE;
+	swapArray = new int*[10];
+	pageLocation = new int*[10];
+	for (int a = 0; a < 10; a++)
+	{
+		swapArray[a] = new int[1000];
+		pageLocation[a] = new int[1000];
+		for (int b = 0; b < 1000; b++)
+		{
+			pageLocation[a][b] = 0;
+		}
 	}
-	
+
+	// Create and open the swap file
 	bool success = fileSystem->Create("swap_file", (PageSize*NumSwapPages));
     ASSERT(success); // if we can't create the swap file, abort
     swapFile = fileSystem->Open("swap_file");
     ASSERT(swapFile); // if Open returns null, abort
+
 }
 
 //----------------------------------------------------------------------
@@ -291,6 +408,7 @@ Cleanup()
     delete interrupt;
     if(ipt != NULL){
     	delete ipt;
+    	delete iptLock;
     }
     
     Exit(0);

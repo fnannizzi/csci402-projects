@@ -36,8 +36,8 @@ all: halt matmult sort createlock createlock_test acquirelock acquirelock1 acqui
  	 wait wait_normative wait_non_normative wait_destroy wait_wrong_process wait_right_process\
  	 signal signal_normative signal_non_normative signal_destroy signal_wrong_process signal_right_process\
  	 broadcast broadcast_normative broadcast_non_normative broadcast_destroy broadcast_wrong_process broadcast_right_process\
- 	 yield yield_test fork exec exit exit_test printx printx_test testfiles\
- 	 museum uniprogrammed_museum multiprogrammed_museum
+ 	 yield yield_test fork fork_test exec exit exit_test printx printx_test testfiles\
+ 	 museum uniprogrammed_museum multiprogrammed_museum createmv destroymv setmv getmv
 
 start.o: start.s ../userprog/syscall.h
 	$(CPP) $(CPPFLAGS) start.s > strt.s
@@ -301,6 +301,12 @@ fork.o: fork.c
 fork: fork.o start.o
 	$(LD) $(LDFLAGS) start.o fork.o -o fork.coff
 	../bin/coff2noff fork.coff fork
+	
+fork_test.o: fork_test.c
+	$(CC) $(CFLAGS) -c fork_test.c
+fork_test: fork_test.o start.o
+	$(LD) $(LDFLAGS) start.o fork_test.o -o fork_test.coff
+	../bin/coff2noff fork_test.coff fork_test
 		
 exec.o: exec.c
 	$(CC) $(CFLAGS) -c exec.c
@@ -355,6 +361,30 @@ multiprogrammed_museum.o: multiprogrammed_museum.c
 multiprogrammed_museum: multiprogrammed_museum.o start.o
 	$(LD) $(LDFLAGS) start.o multiprogrammed_museum.o -o multiprogrammed_museum.coff
 	../bin/coff2noff multiprogrammed_museum.coff multiprogrammed_museum
+	
+createmv.o: createmv.c
+	$(CC) $(CFLAGS) -c createmv.c
+createmv: createmv.o start.o
+	$(LD) $(LDFLAGS) start.o createmv.o -o createmv.coff
+	../bin/coff2noff createmv.coff createmv
+	
+destroymv.o: destroymv.c
+	$(CC) $(CFLAGS) -c destroymv.c
+destroymv: destroymv.o start.o
+	$(LD) $(LDFLAGS) start.o destroymv.o -o destroymv.coff
+	../bin/coff2noff destroymv.coff destroymv
+	
+setmv.o: setmv.c
+	$(CC) $(CFLAGS) -c setmv.c
+setmv: setmv.o start.o
+	$(LD) $(LDFLAGS) start.o setmv.o -o setmv.coff
+	../bin/coff2noff setmv.coff setmv
+	
+getmv.o: getmv.c
+	$(CC) $(CFLAGS) -c getmv.c
+getmv: getmv.o start.o
+	$(LD) $(LDFLAGS) start.o getmv.o -o getmv.coff
+	../bin/coff2noff getmv.coff getmv
 
 clean:
 	rm -f *.o *.coff

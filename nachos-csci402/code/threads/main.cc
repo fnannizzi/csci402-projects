@@ -19,6 +19,7 @@
 //    -d causes certain debugging messages to be printed (cf. utility.h)
 //    -rs causes Yield to occur at random (but repeatable) spots
 //    -z prints the copyright message
+//	  -P choose FIFO or random IPT eviction
 //
 //  USER_PROGRAM
 //    -s causes user programs to be executed in single-step mode
@@ -60,6 +61,7 @@ extern void ThreadTest(), Copy(char *unixFile, char *nachosFile);
 extern void Print(char *file), PerformanceTest(void);
 extern void StartProcess(char *file), ConsoleTest(char *in, char *out);
 extern void MailTest(int networkID);
+extern void Server();
 
 //----------------------------------------------------------------------
 // main
@@ -80,6 +82,7 @@ main(int argc, char **argv)
 {
     int argCount;			// the number of arguments 
 					// for a particular command
+	bool PRPChosen = FALSE;
 
     DEBUG('t', "Entering main");
     (void) Initialize(argc, argv);
@@ -90,8 +93,25 @@ main(int argc, char **argv)
 
     for (argc--, argv++; argc > 0; argc -= argCount, argv += argCount) {
 	argCount = 1;
-        if (!strcmp(*argv, "-z"))               // print copyright
+        if (!strcmp(*argv, "-z")){               // print copyright
             printf (copyright);
+        }
+        if(!strcmp(*argv, "-P")){
+         	if(!strcmp(*(argv+1), "FIFO")){
+        		pageReplacementPolicy = FIFO;
+        		PRPChosen = TRUE;
+        		printf("Using FIFO page replacement\n");
+        	
+        	}
+        	else if(!strcmp(*(argv+1), "RAND")){
+        		pageReplacementPolicy = RAND;
+        		PRPChosen = TRUE;
+        		printf("Using RAND page replacement\n");
+        	}
+        }
+        else {
+        	pageReplacementPolicy = FIFO;
+        }
 #ifdef USER_PROGRAM
         if (!strcmp(*argv, "-x")) {        	// run a user program
 	    ASSERT(argc > 1);
@@ -132,7 +152,10 @@ main(int argc, char **argv)
 	}
 #endif // FILESYS
 #ifdef NETWORK
-        if (!strcmp(*argv, "-o")) {
+		if (!strcmp(*argv, "-SERVER")) {
+			Server();
+		}
+        else if (!strcmp(*argv, "-o")) {
 	    ASSERT(argc > 1);
             Delay(2); 				// delay for 2 seconds
 						// to give the user time to 
@@ -141,6 +164,12 @@ main(int argc, char **argv)
             argCount = 2;
         }
 #endif // NETWORK
+    }
+    
+    if(!PRPChosen){		
+    	pageReplacementPolicy = FIFO;
+        PRPChosen = TRUE;
+        printf("Using FIFO page replacement by default\n");
     }
 
     currentThread->Finish();	// NOTE: if the procedure "main" 

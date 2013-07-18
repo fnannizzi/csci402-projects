@@ -39,6 +39,10 @@
 #define SC_DestroyLock			17
 #define SC_CreateCondition 		18
 #define SC_DestroyCondition 	19
+#define SC_CreateMV				20
+#define SC_DestroyMV			21
+#define	SC_SetMV				22
+#define SC_GetMV				23
 #define SC_Printx				99
 /*Stopped editing here*/
 
@@ -150,6 +154,10 @@ int CreateLock(char* name, int len);
 int DestroyLock(int lock);
 int CreateCondition(char* name, int len);
 int DestroyCondition(int CV);
+int CreateMV(char* name, int len, int len2);
+int DestroyMV(int mv);
+int GetMV(int mv, int index);
+int SetMV(int mv, int value, int index);
 void Printx(char* text, int size, int i);
 
 /*Stopped editing here*/

@@ -118,7 +118,7 @@ Network::Send(PacketHeader hdr, char* data)
 	DEBUG('n', "oops, lost it!\n");
 	return true;
     }
-
+    
     // concatenate hdr and data into a single buffer, and send it out
     char *buffer = new char[MaxWireSize];
     *(PacketHeader *)buffer = hdr;

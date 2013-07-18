@@ -69,6 +69,7 @@ main()
     Printx("Beginning normative test\n",27,1);
     Printx("----------------------------------\n",36,1);
     
+    
     Fork(wait_norm, "wait_normative", 15);
     Fork(signal_waiter_norm, "signal_waiter_normative", 24);
         

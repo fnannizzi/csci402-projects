@@ -7,8 +7,7 @@ main()
 {
     char* name = "test";
     int lock;
-    
-    
+      
     Printx("\nTest is attempting to acquire lock at index -1\n",48,1);
     lock = Acquire(-1);
     if (lock == -1)
@@ -22,14 +21,14 @@ main()
    	 Printx("Lock not acquired\n",18,1);
     else
     	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
-    
+/*    
     Printx("\nTest is attempting to acquire null lock at index 0\n",52,1);	
     lock = Acquire(0);
     if (lock == -1)
    	 Printx("Lock not acquired\n",18,1);
     else
     	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
- 
+*/ 
     Printx("\nTest is creating lock at index 0\n",34,1);	    	   	
     lock = CreateLock(name,4);
     if (lock == -1)
@@ -51,10 +50,37 @@ main()
     else
     	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
     	
+    Printx("\nTest is releasing lock at index 0\n",35,1);		
+    lock = Release(0);
+    if (lock == -1){
+   		Printx("Lock not released\n",20,1);
+   	}
+    else {
+    	Printx("Lock released successfully from index %d\n",43,lock*10000000);
+    }	
+    	
+    Printx("\nTest is attempting to destroy the lock at index 0\n",54,1);
+    lock = DestroyLock(0);
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+   	}
+    else {
+    	Printx("Lock at index %d destroyed successfully\n",41,lock*10000000);
+    }
+    
+    Printx("\nTest is attempting to acquire lock at index 0\n",50,1);    
+    lock = Acquire(0);
+    if (lock == -1)
+   	 Printx("Lock not acquired\n",18,1);
+    else
+    	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
+    
+    		
+/*    	
     Exec("../test/acquirelock1",20);
     Exec("../test/acquirelock2",20);
 
     Exec("../test/acquirelock3",20);
-    
+*/    
     /* not reached */
 }

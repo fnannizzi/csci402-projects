@@ -100,7 +100,10 @@ SwapHeader (NoffHeader *noffH)
 	noffH->uninitData.inFileAddr = WordToHost(noffH->uninitData.inFileAddr);
 }
 
-// PTTranslationEntry methods
+//----------------------------------------------------------------------
+// PTTranslationEntry::print
+// Prints a page table entry, useful for debugging.
+//----------------------------------------------------------------------
 void PTTranslationEntry::print(int i){
 	DEBUG('a', "PT entry: %d\n", i);
 	DEBUG('a', "	Virtual page: %d\n", virtualPage);
@@ -113,7 +116,12 @@ void PTTranslationEntry::print(int i){
     DEBUG('a', "	SwapByteOffset: %d\n", swapByteOffset);
 }
 
-void printTLB(){
+
+//----------------------------------------------------------------------
+// PrintTLB
+// Prints all entries of the TLB, useful for debugging.
+//----------------------------------------------------------------------
+void PrintTLB(){
     for(int i = 0; i < TLBSize; i++){
     	DEBUG('a', "TLB entry: %d\n", i);
     	DEBUG('a', "	Virtual page: %d\n", machine->tlb[i].virtualPage);
@@ -123,13 +131,31 @@ void printTLB(){
     }
 }
 
-void invalidateAllTLB(){
+
+//----------------------------------------------------------------------
+// InvalidateAllTLB
+// Called on a context switch, used to invalidate all TLB entries
+//----------------------------------------------------------------------
+void InvalidateAllTLB(){
+	//iptLock->Acquire();
+	//printf("CONTEXT SWITCH\n");
     for(int i = 0; i < TLBSize; i++){
-    	machine->tlb[i].valid = FALSE; // invalidate every entry in TLB
+    	// propagate dirty bits to IPT
+    	if(machine->tlb[i].valid){
+    		ipt->table[machine->tlb[i].physicalPage].dirty = machine->tlb[i].dirty;
+    	}
+    	// invalidate every entry in TLB
+    	machine->tlb[i].valid = FALSE;
     }
+    //iptLock->Release();
 }
 
-int searchForTLBEntry(int vpn, int processID){
+//----------------------------------------------------------------------
+// SearchForTLBEntry
+// Returns the index of a valid TLB entry that matches the given virtual
+// address and process ID.
+//----------------------------------------------------------------------
+int SearchForTLBEntry(int vpn){
 	int index = -1;
 	for(int i = 0; i < TLBSize; i++){
 		if(machine->tlb[i].virtualPage == vpn){		
@@ -142,7 +168,11 @@ int searchForTLBEntry(int vpn, int processID){
 	return index;
 }
 
-void updateTLBEntry(int index, int paddr, int vaddr, bool dirtyBit, 
+//----------------------------------------------------------------------
+// UpdateTLBEntry
+// Update an entry in the TLB with the given data.
+//----------------------------------------------------------------------
+void UpdateTLBEntry(int index, int paddr, int vaddr, bool dirtyBit, 
 					bool useBit, bool readOnlyBit, bool validBit){
 					
    	machine->tlb[index].physicalPage = paddr;
@@ -193,6 +223,7 @@ AddrSpace::AddrSpace(OpenFile *executable) : fileTable(MaxOpenFiles) {
     
     // we need to increase the size to leave room for the stack
     numPages = divRoundUp(size, PageSize) + divRoundUp(UserStackSize,PageSize); // we need to increase the size to leave room for the stack
+    printf("Num Pages: %i\n",numPages);
     size = numPages * PageSize;
 
     //ASSERT(numPages <= NumPhysPages);		// check we're not trying to run anything too big --
@@ -215,35 +246,41 @@ AddrSpace::AddrSpace(OpenFile *executable) : fileTable(MaxOpenFiles) {
 		//pageTable[i].virtualPage = i;	// for now, virtual page # = phys page #
 		//pageTable[i].physicalPage = availablePage;//availablePage;
 		//pageNumbers[i] = availablePage;
-		pageTable[i].virtualPage = i; // set this as null, so we know if the page is tracked in the page table or not
+		pageTable[i].virtualPage = i;
 		pageTable[i].valid = FALSE; // cannot set as valid until page is "loaded" into memory
 		pageTable[i].use = FALSE;
 		pageTable[i].dirty = FALSE;
 		pageTable[i].readOnly = FALSE;  // if the code segment was entirely on a separate page, we could set its pages to be read-only
-    	pageTable[i].pageLocation = EXECUTABLE; // all pages are located in the executable at this point
+    	pageTable[i].pageLocation = EXECUTABLE; // most pages are located in the executable at this point
 		pageTable[i].setSwapByteOffset(-1); // we haven't ever written to the swap file, so the byte offset is invalid
 		
-    	if ((i*PageSize) < (unsigned int)noffH.code.size){
+    	//if ((i*PageSize) < (unsigned int)noffH.code.size){
     		pageTable[i].setExecutableByteOffset(noffH.code.inFileAddr+(i*PageSize));
-    		pageTable[i].pageType = CODE;
+    	//	pageTable[i].pageType = CODE;
     		DEBUG('a', "Initializing code page %d at 0x%x \n", i, noffH.code.inFileAddr+(i*PageSize));
    		 	//executableFile->ReadAt(&(machine->mainMemory[availablePage*PageSize]),PageSize,noffH.code.inFileAddr+(i*PageSize));
-    	}
-    	else if(((i*PageSize) > (unsigned int)noffH.code.size) && ((i*PageSize) < (unsigned int)(noffH.code.size + noffH.initData.size))){
-    		pageTable[i].setExecutableByteOffset(noffH.initData.inFileAddr+(i*PageSize));
-    		pageTable[i].pageType = DATA;
-    		DEBUG('a', "Initializing data page %d at 0x%x \n", i, noffH.initData.inFileAddr+(i*PageSize));
+    	//}
+    	//else if(((i*PageSize) > (unsigned int)noffH.code.size) && ((i*PageSize) < (unsigned int)(noffH.code.size + noffH.initData.size))){
+    	//	pageTable[i].setExecutableByteOffset(noffH.initData.inFileAddr+(i*PageSize));
+    	//	pageTable[i].pageType = DATA;
+    	//	DEBUG('a', "Initializing data page %d at 0x%x \n", i, noffH.initData.inFileAddr+(i*PageSize));
   	 		//executable->ReadAt(&(machine->mainMemory[availablePage*PageSize]),PageSize,noffH.initData.inFileAddr+(i*PageSize));
-  	 	}
+  	 	//}
+  	 	//else {
+  	 	//	pageTable[i].setExecutableByteOffset(noffH.initData.inFileAddr+(i*PageSize));
+    	//	pageTable[i].pageType = DATA;
+    	//	DEBUG('a', "Initializing other page %d at 0x%x \n", i, noffH.initData.inFileAddr+(i*PageSize));
+  	 	//}
     }
+
     makeNewPTLock->Release();
     DEBUG('a', "Finished creating page table\n");
     // print out PT
 	for(i = 0; i < numPages; i++){
 		pageTable[i].print(i);
 	}
-   	// DEBUG('a', "Debugging break\n");
-   	// interrupt->Halt();
+   	 //DEBUG('a', "Debugging break\n");
+   	 //interrupt->Halt();
     
 	// zero out the entire address space, to zero the unitialized data segment and the stack segment
     /* bzero(machine->mainMemory, size);
@@ -326,7 +363,7 @@ void AddrSpace::SaveState()
 void AddrSpace::RestoreState() 
 {
 	// TODO: check to see if next thread is from same process
-    invalidateAllTLB(); // invalidate every entry in TLB
+    InvalidateAllTLB(); // invalidate every entry in TLB
     //machine->pageTable = pageTable;
     //machine->pageTableSize = numPages;
 }
@@ -345,17 +382,33 @@ int AddrSpace::MakeNewPT()
     for (i = 0; i < numPages; i++)
     {
     	pageTable2[i].virtualPage = pageTable[i].virtualPage;	// for now, virtual page # = phys page #
-		//pageTable2[i].physicalPage = pageTable[i].physicalPage;
+		pageTable2[i].pageLocation = pageTable[i].pageLocation;
+		pageTable2[i].pageType = pageTable[i].pageType;
 		pageTable2[i].valid = pageTable[i].valid;
 		pageTable2[i].use = pageTable[i].use;
 		pageTable2[i].dirty = pageTable[i].dirty;
 		pageTable2[i].readOnly = pageTable[i].readOnly; 
+		pageTable2[i].setExecutableByteOffset(pageTable[i].getExecutableByteOffset());
+		pageTable2[i].setSwapByteOffset(pageTable[i].getSwapByteOffset());
     }
     
     pageNumbers = new int[8];
     for (i = numPages; i < (numPages + 8); i++)
     {
-    	availablePage = pageMap->Find();
+    	pageTable2[i].virtualPage = i;
+    	//pageTable2[i].pageLocation = STACK_SPACE;
+    	pageTable2[i].pageType = STACK;
+    	pageTable2[i].valid = FALSE;
+    	pageTable2[i].use = FALSE;
+    	pageTable2[i].dirty = FALSE;
+    	pageTable2[i].readOnly = FALSE;
+    	pageTable2[i].setExecutableByteOffset(-1);
+    	pageTable2[i].setSwapByteOffset(-1);
+    	
+    	pageLocation[currentThread->space->getID()][i] = 2;
+    	
+    	
+    	/*availablePage = pageMap->Find();
     	if (availablePage == -1)
     	{
     		printf("There is no more space for the stack\n");
@@ -368,12 +421,13 @@ int AddrSpace::MakeNewPT()
 		pageTable2[i].dirty = FALSE;
 		pageTable2[i].readOnly = FALSE; 
 		//pageNumbers[i - numPages] = availablePage;
+		*/
     }
     delete [] pageTable; // free up the memory from the old page table
     pageTable = pageTable2; // point to the new page table
     numPages+=8; // update numPages
     //machine->pageTable = pageTable; // point the machine to the new page table
-    machine->pageTableSize = numPages; // update the machine's pageTableSize variable
+    //machine->pageTableSize = numPages; // update the machine's pageTableSize variable
     int loc = (numPages*PageSize) - 16; // record the new starting point in a local variable
     makeNewPTLock->Release(); // release lock
     return loc;   // return the new starting point

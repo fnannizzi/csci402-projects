@@ -202,6 +202,38 @@ DestroyCondition:
 	j	$31
 	.end DestroyCondition
 	
+	.globl CreateMV
+	.ent	CreateMV	
+CreateMV:
+	addiu $2,$0,SC_CreateMV
+	syscall
+	j	$31
+	.end CreateMV	
+	
+	.globl DestroyMV
+	.ent	DestroyMV	
+DestroyMV:
+	addiu $2,$0,SC_DestroyMV
+	syscall
+	j	$31
+	.end DestroyMV
+	
+	.globl SetMV
+	.ent	SetMV	
+SetMV:
+	addiu $2,$0,SC_SetMV
+	syscall
+	j	$31
+	.end SetMV
+	
+	.globl GetMV
+	.ent	GetMV	
+GetMV:
+	addiu $2,$0,SC_GetMV
+	syscall
+	j	$31
+	.end GetMV
+	
 	.globl Printx
 	.ent	Printx
 Printx:
@@ -217,4 +249,3 @@ Printx:
 __main:
         j       $31
         .end    __main
-

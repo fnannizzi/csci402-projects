@@ -117,7 +117,8 @@ OpenFile::Write(char *into, int numBytes)
 int
 OpenFile::ReadAt(char *into, int numBytes, int position)
 {
-	DEBUG('a', "Entered ReadAt().\n");
+	printf("Entered ReadAt().\n");
+	//DEBUG('a', "Entered ReadAt().\n");
     int fileLength = hdr->FileLength();
     int i, firstSector, lastSector, numSectors;
     char *buf;

@@ -5,25 +5,40 @@ int b, c;
 int
 main()
 {
-    char* name = "test";
-    int lock;
+    char* name = "lock1";
+    int lock1, lock2, lock3;
     int i;
     
-    Printx("\nTest is creating 500 locks to faill up table\n",45,1); /*Will have to change based off MAXLOCKS*/
-    for (i = 0; i < 500; i++)
-    {
-    	lock = CreateLock(name,4);
-   	if (lock == -1)
+   	Printx("Test is creating a lock named lock1\n",38,1);
+   	lock1 = CreateLock(name, 5);
+   	if(lock1 == -1){
    		Printx("Lock not created\n",18,1);
-    	else
-    		Printx("Lock created successfully at index %d%d\n",40,lock*10000);
-    }
-    Printx("\nTest is attempting to create one more lock\n",44,1);
-    lock = CreateLock(name,4);
-    if (lock == -1)
+   	}
+   	else {
+   		Printx("Lock created successfully at index %d%d\n",40,lock1*10000);	
+   	}
+   	
+   	Printx("Test is creating another lock named lock1\n",44,1);
+   	lock2 = CreateLock(name, 5);
+   	if(lock2 == -1){
    		Printx("Lock not created\n",18,1);
-    	else
-    		Printx("Lock created successfully at index %d%d\n",40,lock*10000);
+   	}
+   	else if(lock2 == lock1){
+   		Printx("Lock already exists at index %d%d\n",36,lock2*10000);
+   	}
+   	else {
+   		Printx("Lock created successfully at index %d%d\n",40,lock2*10000);	
+   	}
+   	
+   	name = "lock2";
+   	Printx("Test is creating another lock named lock2\n",44,1);
+   	lock3 = CreateLock(name, 5);
+   	if(lock3 == -1){
+   		Printx("Lock not created\n",18,1);
+   	}
+   	else {
+   		Printx("Lock created successfully at index %d%d\n",40,lock3*10000);	
+   	}
     
     Exit(0);
     /* not reached */

@@ -10,71 +10,81 @@ main()
     
     Printx("\nTest is attempting to destroy a lock at index -1\n",50,1);
     lock = DestroyLock(-1);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+    }
+    else {
     	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
-
+	}
+	
     Printx("\nTest is attempting to destroy a lock at index 200\n",51,1);
     lock = DestroyLock(200);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+   	}
+    else {
     	Printx("Lock at index %d destroyed successfully\n",41,lock*10000000);
-    
-    Printx("\nTest is attempting to destroy a null lock at index 0\n",54,1);
-    lock = DestroyLock(0);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
-    	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
+    }
     
     Printx("\nTest is creating a lock at index 0\n",36,1);
     lock = CreateLock(name,4);
-    if (lock == -1)
-   	 Printx("Lock ran into a problem\n",24,1);
-    else
+    if (lock == -1){
+   		Printx("Lock not created\n",19,1);
+   	}
+    else {
     	Printx("Lock created successfully at index %d\n",38,lock*10000000);
-    	
-    Printx("\nTest is acquiring lock at index 0\n",35,1);		
-    lock = Acquire(0);
-    if (lock == -1)
-   	 Printx("Lock not acquired\n",18,1);
-    else
-    	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
+    }	
     
-    Printx("\nTest is attempting to destroy previously acquired lock at index 0\n",67,1);
+    Printx("\nTest is acquiring lock at index 0\n",35,1);	
+    lock = Acquire(0);
+    if (lock == -1){
+   		Printx("Lock not acquired\n",18,1);
+    }
+    else {
+    	Printx("Lock acquired successfully from index %d\n",41,lock*10000000);
+    }
+    
+/*    Printx("\nTest is attempting to destroy previously acquired lock at index 0\n",67,1);
     lock = DestroyLock(0);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
+    if (lock == -1){
+   	 	Printx("Lock not set to be destroyed\n",29,1);
+   	}
+    else {
     	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
+    }*/
        
     Printx("\nTest is releasing lock at index 0\n",35,1);		
     lock = Release(0);
-    if (lock == -1)
-   	 Printx("Lock not released\n",18,1);
-    else
-    	Printx("Lock released successfully from index %d\n",41,lock*10000000);
-    	
+    if (lock == -1){
+   		Printx("Lock not released\n",20,1);
+   	}
+    else {
+    	Printx("Lock released successfully from index %d\n",43,lock*10000000);
+    }
+  	
     Printx("\nTest is attempting to destroy previously released lock at index 0\n",67,1);
     lock = DestroyLock(0);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+    }
+    else {
     	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
-    
-    
+    }
+/*    
     Printx("\nTest is attempting to destroy previously destroyed lock at index 0\n",68,1);	
     lock = DestroyLock(0);
-    if (lock == -1)
-   	 Printx("Lock not set to be destroyed\n",29,1);
-    else
+    if (lock == -1){
+   		Printx("Lock not set to be destroyed\n",29,1);
+    }
+    else {
     	Printx("Lock at index %d set to be destroyed\n",38,lock*10000000);
-    	
-    Exec("../test/destroylock1",20);
-    Exec("../test/destroylock2",20);
+    }*/
     
+    Exit(0);
+    	
+    /*Exec("../test/destroylock1",20);
+    Exec("../test/destroylock2",20);
+    */
    /*Need to show that acquiring or releasing from one thread interacts with another one trying to destroy*/
     
     

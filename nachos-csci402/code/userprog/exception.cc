@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <iostream>
 #include <ctime>
+#include <sstream>
 
 using namespace std;
 
@@ -92,16 +93,20 @@ Process* constructProcess(int id, AddrSpace* space) {
 #define MAX_CONDITIONS 	500
 #define MAX_PROCESSES 	5
 
+#define MSG_LENGTH		40
+
 // Global tables to hold locks, CVs, and processes    
 LockX* lockTable[MAX_LOCKS];
 ConditionX* conditionTable[MAX_CONDITIONS];
 Process* processTable[MAX_PROCESSES];
 int numProcesses = 0;
+int numProcessesExited = -1;
 Lock* forkLock = new Lock("forkLock");
 Lock* execLock = new Lock("execLock");
 Lock* conditionLock = new Lock("conditionLock");
 Lock* processLock[MAX_PROCESSES];
 Condition* processCV[MAX_PROCESSES];
+int mailboxCount = 0;
 
 int copyin(unsigned int vaddr, int len, char *buf) {
     // Copy len bytes from the current thread's virtual address vaddr.
@@ -119,7 +124,7 @@ int copyin(unsigned int vaddr, int len, char *buf) {
 	  }	
       
       buf[n++] = *paddr;
-     
+    	//printf("copyin: %s, %d\n", buf, n);
       if ( !result ) {
 		//translation failed
 		return -1;
@@ -306,7 +311,7 @@ void Close_Syscall(int fd) {
     }
 }
 
-/*Started editing here*/
+// Started editing here
 void Kernel_Thread(int ktint) {
 	KT* kt = (KT*)ktint; // decode the pointer to a kernel thread object
 	machine->WriteRegister(PCReg,kt->vaddr); // write the PCReg with the virtual address of the kernel thread
@@ -316,7 +321,7 @@ void Kernel_Thread(int ktint) {
 	machine->Run(); // call machine->Run()
 }
 
-void Fork_Syscall(int vaddr, int name, int len) { /*Not sure about the parameter, how do we make into a *func type*/
+void Fork_Syscall(int vaddr, int name, int len) { // Not sure about the parameter, how do we make into a *func type
 	/*Need to implement this in Part 2*/
 	forkLock->Acquire();
 	char *buf = new char[len+1];	// Kernel buffer to put the name in
@@ -343,7 +348,7 @@ void Fork_Syscall(int vaddr, int name, int len) { /*Not sure about the parameter
 	
 	Thread* t = new Thread(buf); // create a new thread object
 	t->space = currentThread->space; // assign the new thread to the current address space
-
+	t->mailbox = mailboxCount++;
 	//Update process table 
 	int processID = currentThread->space->getID(); // get the processID of the current space
 	processTable[processID]->threadCount++; // increment threadCount to reflect the new thread
@@ -366,6 +371,7 @@ void Exec_Thread(int i){
 
 int Exec_Syscall(int vaddr, int len) {
     execLock->Acquire(); // acquire the lock on exec
+
     char *buf = new char[len+1];	// Kernel buffer to put the name in
     OpenFile *f;			// The new open file
 
@@ -387,7 +393,7 @@ int Exec_Syscall(int vaddr, int len) {
     }
 
     buf[len]='\0';
-
+    
     f = fileSystem->Open(buf); // Converts to physical address and reads contents and stores openfile pointer
     delete[] buf;
     if (f==NULL) {
@@ -395,32 +401,85 @@ int Exec_Syscall(int vaddr, int len) {
     	execLock->Release();
     	return -1;
     }
-    
     AddrSpace * addrspace = new AddrSpace(f); //Creates new address space for executable
+    numProcesses++;
     addrspace->setID(numProcesses); // give the new address space an ID
     Thread * t = new Thread("threadexec"); //Creates a new thread
     t->space = addrspace; //Allocates space created to thread space
-    delete f;
+    t->mailbox = mailboxCount++;
+    //delete f;
     
     processTable[numProcesses] = constructProcess(numProcesses,addrspace); // create a new process object
     processLock[numProcesses] = new Lock("processLock"); // create a new process lock
     processCV[numProcesses] = new Condition("processCV"); // create a new process CV
     processLock[numProcesses]->Acquire(); // acquire the process lock
-    processTable[numProcesses]->threadCount++; // increment the threadcount to reflect the main thread
+    //processTable[numProcesses]->threadCount++; // increment the threadcount to reflect the main thread
     processLock[numProcesses]->Release(); // release the process lock
-    numProcesses++; // increment numProcesses to reflect the new process
+    //numProcesses++; // increment numProcesses to reflect the new process
 
-    machine->WriteRegister(2,addrspace->getID()); // Writes spaceID to register 2
+    //machine->WriteRegister(2,addrspace->getID()); // Writes spaceID to register 2
     execLock->Release(); // release the lock on exec
     t->Fork(Exec_Thread,0); // fork an exec_thread
     return addrspace->getID(); // return the address space's ID
 }
 
+void deleteStack(){ 
+	for(int i = 0; i < 8; i++){
+		//printf("Clearing page %d \n", currentThread->space->pageNumbers[i] );
+		pageMap->Clear(currentThread->space->pageNumbers[i]); // Clear the pageMap 
+	}		
+}
+
 void Exit_Syscall(int i) {
 	printf("Exit value: %d \n", i);
-	currentThread->Finish(); // allow the current thread to exit
+	//currentThread->Finish(); // allow the current thread to exit
+	int id = currentThread->space->getID();
+	if (id == 0)
+	{
+		execLock->Acquire();
+		numProcessesExited++;
+		if (numProcessesExited == numProcesses)
+		{
+			execLock->Release();
+			interrupt->Halt();
+		}
+		else
+		{
+			execLock->Release();
+			currentThread->Finish();
+		}
+	}
+	else
+	{
+		execLock->Acquire();
+		processLock[id]->Acquire();
+		processTable[id]->threadCount--;
+		if (processTable[id]->threadCount == 0)
+		{
+			numProcessesExited++;
+			if (numProcessesExited == numProcesses)
+			{
+				processLock[id]->Release();
+				execLock->Release();
+				interrupt->Halt();
+			}
+			else
+			{
+				processLock[id]->Release();
+				execLock->Release();
+				currentThread->Finish();
+			}
+		}
+		else
+		{
+			processLock[id]->Release();
+			execLock->Release();
+			currentThread->Finish();
+		}
+	}
+	
 
-	int index = currentThread->space->getID(); // get address space/process ID
+	/*int index = currentThread->space->getID(); // get address space/process ID
 	processLock[index]->Acquire(); // acquire lock on the process table
 	processTable[index]->threadCount--; // decrement threadcount to show this thread is exiting
 	if(currentThread->isMain()){ // if the current thread is the main thread of its process
@@ -437,79 +496,213 @@ void Exit_Syscall(int i) {
 			currentThread->space->DestroyStack(currentThread->id);
 	}
 	processLock[index]->Release(); // release the process table lock
-	currentThread->Finish(); // allow the current thread to exit
+	currentThread->Finish(); // allow the current thread to exit*/
 }
 
 /*Lock code*/
-
 int Acquire_Syscall(int index) {
- if ((index >= MAX_LOCKS) || (index < 0)) { // lock index is invalid
-  	printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
-  	return -1;
-  }
-  if (lockTable[index] == NULL) { // lock at index is null
-  	printf("%s","Lock was never initialized\n");
-  	return -1;
-  }
-  if (lockTable[index]->processOwner != currentThread->space) { // lock not owned by process
-  	printf("%s","Lock is not owned by current process\n");
-  	return -1;
-  }
-  if (lockTable[index]->lock->isHeldByCurrentThread()) { // lock not held by current thread
-  	printf("Thread %s already owns the lock it is attempting to acquire.\n",currentThread->getName());
-  	return -1;
-  }
-  if (lockTable[index]->isDeleted) { // lock has already been deleted
-  	printf("%s", "Lock has already been deleted\n");
-  	return -1;
-  }
-  if (lockTable[index]->isToBeDeleted) { // lock is marked for deletion
-  	printf("%s", "Lock has already been set to be deleted\n");
-  	delete lockTable[index]->lock; // delete the lock
-  	lockTable[index]->isDeleted = true; // set isDeleted to true
-  	printf("Lock has now been deleted\n");
-  	return -1;
-  }
+
+#ifdef NETWORK
+    
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'A';
+    msg->request[1] = 'Q';
+    msg->name = new char[20];
+    msg->name = "Acquire";
+    msg->index = index; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+   	postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+   	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+   
+#else
+
+ 	if ((index >= MAX_LOCKS) || (index < 0)) { // lock index is invalid
+  		printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
+  		return -1;
+  	}
+  	if (lockTable[index] == NULL) { // lock at index is null
+  		printf("%s","Lock was never initialized\n");
+  		return -1;
+  	}
+  	if(lockTable[index]->processOwner != currentThread->space) { // lock not owned by process
+  		printf("%s","Lock is not owned by current process\n");
+  		return -1;
+  	}
+  	if (lockTable[index]->lock->isHeldByCurrentThread()) { // lock not held by current thread
+  		printf("Thread %s already owns the lock it is attempting to acquire.\n",currentThread->getName());
+  		return -1;
+  	}
+  	if (lockTable[index]->isDeleted) { // lock has already been deleted
+  		printf("%s", "Lock has already been deleted\n");
+  		return -1;
+  	}
+  	if (lockTable[index]->isToBeDeleted) { // lock is marked for deletion
+  		printf("%s", "Lock has already been set to be deleted\n");
+  		delete lockTable[index]->lock; // delete the lock
+  		lockTable[index]->isDeleted = true; // set isDeleted to true
+  		printf("Lock has now been deleted\n");
+  		return -1;
+  	}
   
-  lockTable[index]->lock->Acquire(); // acquire the lock
-  return index; 
+  	lockTable[index]->lock->Acquire(); // acquire the lock
+  	return index;
+
+#endif 
 }
 
 int Release_Syscall(int index) {
-	if ((index >= MAX_LOCKS) || (index < 0)) { // lock index is invalid
-  	printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
-  	return -1;
-  }
-  if (lockTable[index] == NULL) { // lock at index is null
-  	printf("%s","Lock was never initialized\n");
-  	return -1;
-  }
-  if (!lockTable[index]->lock->isHeldByCurrentThread()){ // lock is not held by current thread
-  	printf("Thread %s does not own the lock it is attempting to release\n",currentThread->getName());
-  	return -1;
-  }
-  if (lockTable[index]->processOwner != currentThread->space) { // lock not owned by process
-  	printf("%s","Lock is not owned by current process\n");
-  	return -1;
-  }
-  if (lockTable[index]->isDeleted) { // lock is already deleted
-  	printf("%s", "Lock has already been deleted\n");
-  	return -1;
-  }
-  if (lockTable[index]->isToBeDeleted) { // lock is marked for deletion
-  	printf("%s", "Lock will now be deleted\n");
-  	lockTable[index]->lock->Release(); // release the lock
-  	delete lockTable[index]->lock; // delete the lock
-  	lockTable[index]->isDeleted = true; // set deleted to true
-  	printf("Lock has been deleted\n");
-  	return index;
-  }
 
-  lockTable[index]->lock->Release(); // release the lock
-  return index;
+#ifdef NETWORK
+    
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'R';
+    msg->request[1] = 'L';
+    msg->name = new char[20];
+    msg->name = "Release";
+    msg->index = index; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+   	postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+   	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+
+#else
+
+	if ((index >= MAX_LOCKS) || (index < 0)) { // lock index is invalid
+  		printf("Invalid Lock requested. Must be between 0 and %i\n", MAX_LOCKS);
+  		return -1;
+ 	}
+  	if (lockTable[index] == NULL) { // lock at index is null
+  		printf("%s","Lock was never initialized\n");
+  		return -1;
+  	}
+  	if (!lockTable[index]->lock->isHeldByCurrentThread()){ // lock is not held by current thread
+  		printf("Thread %s does not own the lock it is attempting to release\n",currentThread->getName());
+  		return -1;
+  	}
+ 	if (lockTable[index]->processOwner != currentThread->space) { // lock not owned by process
+  		printf("%s","Lock is not owned by current process\n");
+  		return -1;
+  	}
+  	if (lockTable[index]->isDeleted) { // lock is already deleted
+  		printf("%s", "Lock has already been deleted\n");
+  		return -1;
+  	}
+  	if (lockTable[index]->isToBeDeleted) { // lock is marked for deletion
+  		printf("%s", "Lock will now be deleted\n");
+  		lockTable[index]->lock->Release(); // release the lock
+  		delete lockTable[index]->lock; // delete the lock
+  		lockTable[index]->isDeleted = true; // set deleted to true
+  		printf("Lock has been deleted\n");
+  		return index;
+  	}
+	
+  	lockTable[index]->lock->Release(); // release the lock
+  	return index;
+
+#endif
 }
 
 int Wait_Syscall(int iCV, int iLock) {
+#ifdef NETWORK
+  
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'W';
+    msg->request[1] = 'T';
+    msg->name = new char[20];
+    msg->name = "Wait";
+    msg->index = iCV; //Maybe need to rename
+    msg->index2 = iLock;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+
+#else
+
 	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){ // CV index is invalid
 		printf("Invalid conditionTable index %d, cannot allow %s to wait \n", 
 				iCV, currentThread->getName());
@@ -561,9 +754,54 @@ int Wait_Syscall(int iCV, int iLock) {
 		conditionTable[iCV]->condition->Wait(lockTable[iLock]->lock); // wait on the CV
 	}
 	return 0;
+	
+#endif
 }
 
 int Signal_Syscall(int iCV, int iLock) {
+#ifdef NETWORK
+  
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'S';
+    msg->request[1] = 'G';
+    msg->name = new char[20];
+    msg->name = "Signal";
+    msg->index = iCV; //Maybe need to rename
+    msg->index2 = iLock;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+
+#else
+
 	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){ // invalid CV index
 		printf( "Invalid conditionTable index %d, cannot allow %s to signal \n", 
 				iCV, currentThread->getName());
@@ -621,9 +859,54 @@ int Signal_Syscall(int iCV, int iLock) {
 		}
 	}
 	return 0;
+	
+#endif
 }
 
 int Broadcast_Syscall(int iCV, int iLock) { // delete CV if no one is waiting on it and isToBeDeleted
+#ifdef NETWORK
+  
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'B';
+    msg->request[1] = 'C';
+    msg->name = new char[20];
+    msg->name = "Broadcast";
+    msg->index = iCV; //Maybe need to rename
+    msg->index2 = iLock;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+
+#else	
+
 	if((iCV < 0) || (iCV >= MAX_CONDITIONS)){ // invalid CV index
 		printf( "Invalid conditionTable index %d, cannot allow %s to broadcast \n", 
 				iCV, currentThread->getName());
@@ -681,10 +964,12 @@ int Broadcast_Syscall(int iCV, int iLock) { // delete CV if no one is waiting on
 		}
 	}
 	return 0;
+	
+#endif
 }
 
 int CreateLock_Syscall(unsigned int vaddr, int len) {
-    char *buf = new char[len+1];	// Kernel buffer to put the name in
+	char *buf = new char[len+1];	// Kernel buffer to put the name in
 
     if (!buf) return -1;
 
@@ -692,9 +977,53 @@ int CreateLock_Syscall(unsigned int vaddr, int len) {
 		printf("%s","Bad pointer passed to CreateLock\n");
 		delete buf;
 		return -1;
-    }
+    } 
 
     buf[len]='\0';
+    
+#ifdef NETWORK
+    
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message * msg = new Message;
+    msg->name = new char[20];
+    strcpy(msg->name, buf);
+    msg->request = new char[2];
+    msg->request[0] = 'C';
+    msg->request[1] = 'L';
+    msg->index = len; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+ 	Message* receivedMsg = decodeMessage(receivedData); 
+    returnValue = receivedMsg->index;
+    
+/*    delete buf;
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+   
+#else
     
     int lockTableIndex = -1; // create index
     for (int i = 0; i < MAX_LOCKS; i++){ 
@@ -703,6 +1032,7 @@ int CreateLock_Syscall(unsigned int vaddr, int len) {
     		break;
     	}
     }
+    
     if (lockTableIndex == -1) { // no indexes found
     	printf("%s","There are no available spaces to CreateLock\n");
     	delete buf;
@@ -710,44 +1040,88 @@ int CreateLock_Syscall(unsigned int vaddr, int len) {
     }
  
     lockTable[lockTableIndex] = constructLockX(buf); // make a new lock
-    
     delete[] buf;
     return lockTableIndex;
+    
+#endif
 }
 
 int DestroyLock_Syscall(int index){
-  if ((index >= MAX_LOCKS) || (index < 0)) { // invalid lock index
-  	printf("Invalid Lock requested. Must be between 0 and %i\n",MAX_LOCKS);
-  	return -1;
-  }
-  if (lockTable[index] == NULL) { // lock at index is null
-  	printf("%s","Lock was never initialized\n");
-  	return -1;
-  }
-  if (lockTable[index]->processOwner != currentThread->space){ // lock not owned by process
-  	printf("%s","Lock is not owned by current process\n");
-  	return -1;
-  }
-  if (lockTable[index]->lock->isHeldByCurrentThread()) { // lock owned by current thread
-  	printf("Lock is owned by current thread so cannot be destroyed\n");
-  	return -1;
-  }
-  if (lockTable[index]->isToBeDeleted == true) { // lock is marked for deletion
-  	printf("%s","Lock is already set to be deleted\n"); 
-  	return -1;
-  }
-  if (lockTable[index]->isDeleted) { // lock is already deleted
-  	printf("%s","Lock has already been deleted\n"); 
-  	return -1;
-  }
-  lockTable[index]->isToBeDeleted = true;  // set isToBeDeleted to true
-  printf("Lock at index %i in the table is set to be destroyed\n",index);
+#ifdef NETWORK
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message * msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'D';
+    msg->request[1] = 'L';
+    msg->name = new char[20];
+    msg->name = "DestroyLock";
+    msg->index = index; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData); 
+    returnValue = receivedMsg->index;
+    
+/*    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;*/
+    
+    return returnValue;
+
+#else
+	
+	if ((index >= MAX_LOCKS) || (index < 0)) { // invalid lock index
+  		printf("Invalid Lock requested. Must be between 0 and %i\n",MAX_LOCKS);
+  		return -1;
+  	}
+  	if (lockTable[index] == NULL) { // lock at index is null
+  		printf("%s","Lock was never initialized\n");
+  		return -1;
+  	}
+  	if (lockTable[index]->processOwner != currentThread->space){ // lock not owned by process
+  		printf("%s","Lock is not owned by current process\n");
+  		return -1;
+  	}	
+  	if (lockTable[index]->lock->isHeldByCurrentThread()) { // lock owned by current thread
+  		printf("Lock is owned by current thread so cannot be destroyed\n");
+  		return -1;
+  	}
+ 	if (lockTable[index]->isToBeDeleted == true) { // lock is marked for deletion
+  		printf("%s","Lock is already set to be deleted\n"); 
+  		return -1;
+  	}
+  	if (lockTable[index]->isDeleted) { // lock is already deleted
+  		printf("%s","Lock has already been deleted\n"); 
+  		return -1;
+  	}
+  	lockTable[index]->isToBeDeleted = true;  // set isToBeDeleted to true
+  	printf("Lock at index %i in the table is set to be destroyed\n",index);
  	
-  return index;
+  	return index;
+
+#endif
 }
 
-int CreateCondition_Syscall(unsigned int vaddr, int len){
-    char *buf = new char[len+1];	// Kernel buffer to put the name in
+int CreateCondition_Syscall(unsigned int vaddr, int len){  
+	char *buf = new char[len+1];	// Kernel buffer to put the name in
 	// Make sure memory was allocated for the name
     if (!buf) {
 		printf("%s","Can't allocate kernel buffer in CreateCondition \n");
@@ -761,6 +1135,50 @@ int CreateCondition_Syscall(unsigned int vaddr, int len){
     }
 	// Append a null character to the name
     buf[len]='\0';
+    
+#ifdef NETWORK    
+    
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->name = new char[20];
+    strcpy(msg->name, buf);
+    msg->request = new char[2];
+    msg->request[0] = 'C';
+    msg->request[1] = 'C';
+    msg->index = len; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+  	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData); 
+    returnValue = receivedMsg->index;  
+/*    
+	delete buf;
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+    
+#else
 	
 	int conditionTableIndex = -1;
 	conditionLock->Acquire(); // acquire the condition lock
@@ -782,40 +1200,283 @@ int CreateCondition_Syscall(unsigned int vaddr, int len){
 	//		currentThread->getName(), conditionTable[conditionTableIndex]->condition->getName(), conditionTableIndex);
 	conditionLock->Release(); // release the condition lock
 	delete[] buf;
-	return conditionTableIndex;	
+	return conditionTableIndex;
+
+#endif	
 }
 
 int DestroyCondition_Syscall(int index){
-  if((index >= MAX_CONDITIONS) || (index < 0)) { // invalid CV index
-  	printf("Thread %s: Invalid index in DestroyCondition. Must be between 0 and %d \n",
-  			currentThread->getName(), (MAX_CONDITIONS-1));
-  	return -1;
-  }
-  if(conditionTable[index] == NULL) { // CV at index is null
-  	printf("Thread %s: Condition at index %d cannot be deleted because it was never initialized\n",
-  			currentThread->getName(), index);
-  	return -1;
-  }
-  if(conditionTable[index]->processOwner != currentThread->space){ // CV not owned by current process
-  	printf( "Thread %s: Cannot delete Condition at index %d because it is not owned by current process \n", 
-			currentThread->getName(), index);
-	return -1;
-  }
-  if(conditionTable[index]->isDeleted) { // CV is already deleted
-  	printf("Thread %s: Condition at index %d has already been deleted\n",
-  			currentThread->getName(), index);
-  	return -1;
-  }
+#ifdef NETWORK
+      
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message * msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'D';
+    msg->request[1] = 'C';
+    msg->name = new char[20];
+    msg->name = "DestroyCV";
+    msg->index = index; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+/*    
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+    
+#else
+
+	if((index >= MAX_CONDITIONS) || (index < 0)) { // invalid CV index
+  		printf("Thread %s: Invalid index in DestroyCondition. Must be between 0 and %d \n",
+  				currentThread->getName(), (MAX_CONDITIONS-1));
+  		return -1;
+  	}
+  	if(conditionTable[index] == NULL) { // CV at index is null
+  		printf("Thread %s: Condition at index %d cannot be deleted because it was never initialized\n",
+  				currentThread->getName(), index);
+  		return -1;
+  	}	
+  	if(conditionTable[index]->processOwner != currentThread->space){ // CV not owned by current process
+  		printf( "Thread %s: Cannot delete Condition at index %d because it is not owned by current process \n", 
+				currentThread->getName(), index);
+		return -1;
+  	}
+  	if(conditionTable[index]->isDeleted) { // CV is already deleted
+  		printf("Thread %s: Condition at index %d has already been deleted\n",
+  				currentThread->getName(), index);
+  		return -1;
+  	}
   
-  // Condition can be deleted
-  conditionTable[index]->isToBeDeleted = true; // set isToBeDeleted to true
-  if(conditionTable[index]->condition->isQueueEmpty()){ // no one waiting on CV
-  	conditionTable[index]->isDeleted = true; // set isDeleted to true
-  	delete conditionTable[index]->condition; // delete condition
-  }
-  //printf("Thread %s: Successfully destroyed Condition at index %d \n",
-  //		 currentThread->getName(), index);
-  return 0;
+  	// Condition can be deleted
+  	conditionTable[index]->isToBeDeleted = true; // set isToBeDeleted to true
+  	if(conditionTable[index]->condition->isQueueEmpty()){ // no one waiting on CV
+  		conditionTable[index]->isDeleted = true; // set isDeleted to true
+  		delete conditionTable[index]->condition; // delete condition
+  	}
+  	//printf("Thread %s: Successfully destroyed Condition at index %d \n",
+  	//		 currentThread->getName(), index);
+  	return 0;
+
+#endif
+}
+
+int CreateMV_Syscall(unsigned int vaddr, int len, int len2) {
+#ifdef NETWORK
+	char *buf = new char[len+1];	// Kernel buffer to put the name in
+
+    if (!buf) return -1;
+
+    if( copyin(vaddr,len,buf) == -1 ) {
+		printf("%s","Bad pointer passed to CreateLock\n");
+		delete buf;
+		return -1;
+    } 
+
+    buf[len]='\0';
+    
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message * msg = new Message;
+    msg->name = new char[20];
+    strcpy(msg->name, buf);
+    msg->request = new char[2];
+    msg->request[0] = 'C';
+    msg->request[1] = 'M';
+    msg->index = len; //Maybe need to rename
+    msg->index2 = len2; //Array length
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+/*    
+    delete buf;
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+
+#else
+	return -1;
+#endif
+}
+
+int DestroyMV_Syscall(int mv) {
+#ifdef NETWORK
+	PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'D';
+    msg->request[1] = 'M';
+    msg->name = new char[20];
+    msg->name = "DestroyMV";
+    msg->index = mv; //Maybe need to rename
+    msg->index2 = -1;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    returnValue = receivedMsg->index;
+/*    
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+#else
+    return -1;
+#endif
+}
+
+int GetMV_Syscall(int mv, int index) {
+#ifdef NETWORK
+	PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message* msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'G';
+    msg->request[1] = 'M';
+    msg->name = new char[20];
+    msg->name = "GetMV";
+    msg->index = mv; //Maybe need to rename
+    msg->index2 = index;
+    msg->index3 = -1;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+/*    
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+#else
+    return -1;
+#endif
+}
+
+int SetMV_Syscall(int mv, int index, int value) {
+#ifdef NETWORK
+    PacketHeader packetHeaderSend, packetHeaderReceive;
+    MailHeader mailHeaderSend,mailHeaderReceive;
+    char* receivedData = new char[MaxMailSize];
+    int returnValue;
+    
+    packetHeaderSend.to = 0;    
+    mailHeaderSend.to = 0;
+    mailHeaderSend.from = currentThread->mailbox;
+    
+    Message * msg = new Message;
+    msg->request = new char[2];
+    msg->request[0] = 'S';
+    msg->request[1] = 'M';
+    msg->name = new char[20];
+    msg->name = "SetMV";
+    msg->index = mv; //Maybe need to rename
+    msg->index2 = index;
+    msg->index3 = value;
+    
+	char* msgstringstream = msgPrepare(msg);
+    
+   	mailHeaderSend.length = MSG_LENGTH;
+   	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
+    postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
+    
+	Message* receivedMsg = decodeMessage(receivedData);
+    returnValue = receivedMsg->index;
+    returnValue = receivedMsg->index;
+/*    
+    delete receivedData;
+    delete msg->request;
+    delete msg->name;
+    delete msg;
+    delete msgstringstream;
+    delete receivedMsg->request;
+    delete receivedMsg->name;
+    delete receivedMsg;
+*/    
+    return returnValue;
+#else
+    return -1;
+#endif
 }
 
 void Printx_Syscall(unsigned int vaddr, int len, int value) {
@@ -877,15 +1538,26 @@ void Printx_Syscall(unsigned int vaddr, int len, int value) {
 /*Finished editing here*/
 void HandlePageFault()
 {	
+
+    int vpn = machine->ReadRegister(BadVAddrReg) / PageSize;
+  //IntStatus oldLevel = interrupt->SetLevel(IntOff);  
+  
+	// acquire lock on IPT
+	//printf("%i reached here\n",currentThread->space);
+	iptLock->Acquire();
+	
 	// update timestamps in IPT from TLB
-	int updateIndex;
+	/*int updateIndex;
 	for(int i = 0; i < TLBSize; i++){
-		updateIndex = machine->tlb[i].virtualPage;
-		ipt->table[updateIndex].timestamp = time(NULL);
-	}
+		//if (machine->tlb[i].valid)
+		//{
+			updateIndex = machine->tlb[i].physicalPage;
+			ipt->table[updateIndex].timestamp = time(NULL);
+		//}
+	}*/
 	
 	// read virtual address from register
-    int vpn = machine->ReadRegister(BadVAddrReg) / PageSize;
+
     
     // check IPT
     int iptIndex = ipt->searchForEntry(vpn, currentThread->space->getID());
@@ -899,53 +1571,98 @@ void HandlePageFault()
     		//interrupt->Halt();
     		
     		// pick a page to evict from IPT
-    		int evictionPage = ipt->chooseEvictionPage();
+    		int evictionPage = -1;
+    		if(pageReplacementPolicy == RAND){
+    			//(1) in method
+    			evictionPage = ipt->chooseEvictionPageRandom();
+    		}
+    		else {
+	    		evictionPage = ipt->chooseEvictionPageLRU();
+	    	}
     		
     		// check to see if eviction page is in TLB
-    		int evictionPageInTLB = searchForTLBEntry(ipt->table[evictionPage].virtualPage, 
-    															 currentThread->space->getID());
-    		if(!(evictionPageInTLB == -1)){ // eviction page is in the TLB
+    		int evictionPageInTLB = SearchForTLBEntry(ipt->table[evictionPage].virtualPage);
+    		if(evictionPageInTLB != -1){ // eviction page is in the TLB
     			// set eviction page to invalid and propagate dirty bit back
-    			machine->tlb[evictionPageInTLB].valid = FALSE;
+    			IntStatus oldLevel2 = interrupt->SetLevel(IntOff);
     			ipt->table[evictionPage].dirty = machine->tlb[evictionPageInTLB].dirty;
+    			machine->tlb[evictionPageInTLB].valid = FALSE;
+    			(void) interrupt->SetLevel(oldLevel2);
     		}
     		if(ipt->table[evictionPage].dirty){ // eviction page is dirty
     			// copy to swap file 
-    			currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].setSwapByteOffset( 					
-    				swapFile->Write(&(machine->mainMemory[evictionPage*PageSize]), PageSize));
+    			int swapFileIndex = swapFileMap->Find();
+    			if(swapFileIndex == -1){
+    				fprintf(stderr, "Swap file is full.\n");
+    				interrupt->Halt();	
+    			}
+    			
+    			//1.
+    			 //currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].setSwapByteOffset(swapFileIndex*PageSize);
+    			swapArray[ipt->table[evictionPage].processID][ipt->table[evictionPage].virtualPage] = swapFileIndex*PageSize;
+    			
+    			//2.
+    			// swapFile->WriteAt(&(machine->mainMemory[evictionPage*PageSize]), PageSize, currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].getSwapByteOffset());
+    			swapFile->WriteAt(&(machine->mainMemory[evictionPage*PageSize]), PageSize, (swapFileIndex*PageSize));
+    			
     			// update page location in process page table
-    			currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].pageLocation = SWAP_FILE;
-    			currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].valid = FALSE;
+    			
+    			//3. 
+    			//currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].pageLocation = SWAP_FILE;
+    			pageLocation[ipt->table[evictionPage].processID][ipt->table[evictionPage].virtualPage] = 1;
+    			
+    			//4. 
+    			/*currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].valid = FALSE;
+    			currentThread->space->pageTable[ipt->table[evictionPage].virtualPage].dirty = FALSE;*/
     			
     		}
     		// the page is now evicted
     		iptIndex = evictionPage;
+    		
     	}
     	
     	// copy the needed virtual page into the empty slot in memory from either the swap file or executable
-    	if(currentThread->space->pageTable[vpn].pageLocation == EXECUTABLE){
+    	
+    	//5. 
+    	//if(currentThread->space->pageTable[vpn].pageLocation == EXECUTABLE){
+    	if (pageLocation[currentThread->space->getID()][vpn] == 0) {
     		DEBUG('a', "Read page from executable.\n");
-	    	currentThread->space->executableFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]),
-    													   PageSize, 
-    													   currentThread->space->pageTable[vpn].getExecutableByteOffset());
+	    	
+	    	//6. 
+	    	//currentThread->space->executableFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]), PageSize, currentThread->space->pageTable[vpn].getExecutableByteOffset());
+	    	currentThread->space->executableFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]), PageSize, 40 + (vpn*PageSize));
     	}
-    	else if(currentThread->space->pageTable[vpn].pageLocation == SWAP_FILE){
-	    	swapFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]),
-    						 PageSize, 
-    						 currentThread->space->pageTable[vpn].getSwapByteOffset());
+    	//7. 
+    	//else if(currentThread->space->pageTable[vpn].pageLocation == SWAP_FILE){
+	else if (pageLocation[currentThread->space->getID()][vpn] == 1) {
+	
+	   	 //8. 
+	   	 //swapFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]), PageSize, currentThread->space->pageTable[vpn].getSwapByteOffset());
+	   	 swapFile->ReadAt(&(machine->mainMemory[iptIndex*PageSize]), PageSize, swapArray[currentThread->space->getID()][vpn]);
+    		
+    		//swapFileMap->Clear(currentThread->space->pageTable[vpn].getSwapByteOffset() / PageSize);
     	}
+	else if (pageLocation[currentThread->space->getID()][vpn] == 1) {
+		for (int i = 0; i < PageSize; i++)
+			machine->mainMemory[(iptIndex*PageSize)+i] = '0';
+	}
     	DEBUG('a', "Page loaded into memory.\n");
-    	// update the page location in process page table
-    	currentThread->space->pageTable[vpn].pageLocation = MAIN_MEMORY;
+    	// update the valid in process page table
     	currentThread->space->pageTable[vpn].valid = TRUE;
+    	currentThread->space->pageTable[vpn].dirty = FALSE;
     	
     	// update IPT with new entry
+    	//(2) (within method)
     	ipt->updateEntry(iptIndex, 
     					 vpn, 
     				     currentThread->space->getID(), 
     				     TRUE);
     	
     }
+    
+IntStatus oldLevel = interrupt->SetLevel(IntOff);
+
+    
     // if TLB entry to be replaced is valid and dirty, propagate dirty bit to IPT
    	if(machine->tlb[nextTLB].valid){
    		if(machine->tlb[nextTLB].dirty){
@@ -954,32 +1671,52 @@ void HandlePageFault()
    			ipt->table[tlbIndex].dirty = machine->tlb[nextTLB].dirty;	
    		}
    	}
+   	
+   	//(3)
+   	int useIndex = ipt->searchForEntry(machine->tlb[nextTLB].virtualPage, currentThread->space->getID());
+   	ipt->table[useIndex].use = FALSE;
+   
+   	
    	// replace latest entry in TLB
-   	updateTLBEntry(nextTLB,
+   	UpdateTLBEntry(nextTLB,
    				   ipt->table[iptIndex].physicalPage, 
    				   ipt->table[iptIndex].virtualPage,
-   				   FALSE, FALSE, FALSE, TRUE);
+   				   ipt->table[iptIndex].dirty, FALSE, FALSE, TRUE);
    	
    	// increment nextTLB
    	nextTLB = (nextTLB + 1) % TLBSize;
    	
    	// print out TLB
-	printTLB();
+	PrintTLB();
 	
+
+	(void) interrupt->SetLevel(oldLevel);
+	
+	  iptLock->Release();	
 	// print out IPT
-	ipt->print();
+	//ipt->print();
+	/*printf("MAIN MEMORY\n");
+	for(int i = 0; i < PageSize; i++){
+		if(!machine->mainMemory[(iptIndex*PageSize) + i]){
+			printf("%d NULL\n", i);
+		}
+		else {
+			printf("%s", machine->mainMemory[(iptIndex*PageSize) + i]);	
+		}
+	}
+	printf("\n");*/
 	
-/*	for(int i = 0; i < currentThread->space->getNumPages(); i++){
-		currentThread->space->pageTable[i].printPT(i);
-	}*/
+	// release lock on IPT
 		
    	DEBUG('a', "PageFaultException handled.\n");
 }
 
 
 void ExceptionHandler(ExceptionType which) {
+      //IntStatus oldLevel = interrupt->SetLevel(IntOff);
     int type = machine->ReadRegister(2); // Which syscall?
     int rv=0; 	// the return value from a syscall
+
 
     if ( which == SyscallException ) {
 		switch (type) {
@@ -1076,6 +1813,30 @@ void ExceptionHandler(ExceptionType which) {
 		    	DEBUG('a', "DestroyCondition syscall.\n");
 		    	rv = DestroyCondition_Syscall(machine->ReadRegister(4));
 		    	break;
+		    case SC_CreateMV:
+		    	DEBUG('a', "CreateMV syscall.\n");
+		    	rv = CreateMV_Syscall(machine->ReadRegister(4),
+		    						  machine->ReadRegister(5),
+		    						  machine->ReadRegister(6));
+		    	break;
+		   
+		   case SC_DestroyMV:
+		    	DEBUG('a', "DestroyMV syscall.\n");
+		    	rv = DestroyMV_Syscall(machine->ReadRegister(4));
+		    	break;
+		   
+		   case SC_GetMV:
+		    	DEBUG('a', "GetMV syscall.\n");
+		    	rv = GetMV_Syscall(machine->ReadRegister(4),
+		    					   machine->ReadRegister(5));
+		    	break;
+		   
+		   case SC_SetMV:
+		    	DEBUG('a', "SetMV syscall.\n");
+		    	rv = SetMV_Syscall(machine->ReadRegister(4),
+		    					   machine->ReadRegister(5),
+		    					   machine->ReadRegister(6));
+		    	break;
 		   case SC_Printx:
 		    	DEBUG('a', "Printx syscall.\n");
 		    	Printx_Syscall(machine->ReadRegister(4), 
@@ -1101,4 +1862,5 @@ void ExceptionHandler(ExceptionType which) {
       cout<<"Unexpected user mode exception - which:"<<which<<"  type:"<< type<<endl;
       interrupt->Halt();
     }
+   // (void) interrupt->SetLevel(oldLevel);
 }

@@ -23,8 +23,14 @@
 #define MaxChildSpaces 256
 
 enum PageType 		{ CODE, DATA, STACK };
-enum PageLocation 	{ MAIN_MEMORY, SWAP_FILE, EXECUTABLE };
+enum PageLocation 	{ SWAP_FILE, EXECUTABLE };
 
+//----------------------------------------------------------------------
+// PTTranslationEntry
+// Class used to create page tables that inherits from TranslationEntry.
+// added a page type and location, plus byte offsets for the executable
+// and swap files.
+//----------------------------------------------------------------------
 class PTTranslationEntry: public TranslationEntry {
 	public:
 		PageType pageType;
@@ -55,26 +61,24 @@ class AddrSpace {
     void RestoreState();	// info on a context switch
     Table fileTable;		// Table of openfiles
     /* Started editing */
+    PTTranslationEntry *pageTable;	// Assume linear page table translation for now!
+    Lock* makeNewPTLock;
+    Lock* pageMapLock;
+    int* pageNumbers; 		// used to track individual address space
+    OpenFile* executableFile; 		// executable file should remain open
+    
     int MakeNewPT();
     void DestroyStack(int i);
-    Lock * makeNewPTLock;
-    Lock * pageMapLock;
-    int* pageNumbers; 		// used to track individual address space
-    int getID() {return id;}
-    void setID(int i) {id = i;}
-    int getNumPages() { return numPages; }
-    PTTranslationEntry getPageTableEntry(int entry) {return pageTable[entry];}
-    PTTranslationEntry *pageTable;	// Assume linear page table translation for now!
-    OpenFile* executableFile; 		// executable file should remain open
-
+    int getID() { return id; } // return process ID
+    void setID(int i) { id = i; } // set the process ID
+    int getNumPages() { return numPages; } // return the number of pages needed for a process
+    PTTranslationEntry getPageTableEntry(int entry) { return pageTable[entry]; } // get a specific page table entry
     /* Stopped editing */
 
  private:
  
-    unsigned int numPages;		// Number of pages in the virtual address space
-	/* Started editing */
-    int id;
-	/* Stopped editing */
+    unsigned int numPages; // Number of pages in the virtual address space
+    int id;	// added a process ID 
 };
 
 #endif // ADDRSPACE_H

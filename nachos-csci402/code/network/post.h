@@ -111,6 +111,7 @@ class PostOffice {
     				// Send a message to a mailbox on a remote 
 				// machine.  The fromBox in the MailHeader is 
 				// the return box for ack's.
+   bool PseudoSend(PacketHeader pktHdr, MailHeader mailHdr, char *data);
     
     void Receive(int box, PacketHeader *pktHdr, 
 		MailHeader *mailHdr, char *data);

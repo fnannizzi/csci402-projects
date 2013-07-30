@@ -20,7 +20,7 @@ main()
    		Printx("MV created successfully at index %d%d\n",38,mv*10000);	
    	}
    	
-   	Printx("Test is creating an MV named mv with size 1\n",45,1);
+   	Printx("\nTest is creating an MV named mv with size 1\n",47,1);
    	mv = CreateMV(name, 5,1); /*First index is array length, should it be the second?*/
    	if(mv == -1){
    		Printx("MV not created\n",16,1);
@@ -29,13 +29,13 @@ main()
    		Printx("MV created successfully at index %d%d\n",38,mv*10000);	
    	}
    	
-   	Printx("Test is creating another MV named mv with size 1\n",50,1);
+   	Printx("\nTest is creating another MV named mv with size 1\n",52,1);
    	mv = CreateMV(name, 5,1); /*First index is array length, should it be the second?*/
    	if(mv == -1){
    		Printx("MV not created\n",16,1);
    	}
    	else {
-   		Printx("MV created successfully at index %d%d\n",38,mv*10000);	
+   		Printx("MV already exists at index %d%d\n",33,mv*10000);	
    	}
    	
     

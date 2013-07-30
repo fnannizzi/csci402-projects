@@ -52,13 +52,14 @@ class List {
     void Mapcar(VoidFunctionPtr func);	// Apply "func" to every element 
 					// on the list
     bool IsEmpty();		// is the list empty? 
+    void* getFirst() {return first->item;}
     
 
     // Routines to put/get items on/off list in order (sorted by key)
     void SortedInsert(void *item, int64_t sortKey);	// Put item into list
     void *SortedRemove(int64_t *keyPtr); 	  	// Remove first item from list
 
-  private:
+ // private:
     ListElement *first;  	// Head of the list, NULL if list is empty
     ListElement *last;		// Last element of list
 };

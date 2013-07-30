@@ -151,11 +151,19 @@ char* msgPrepare(Message* msg){
 	ss << ' ';
 	ss << msg->name;
 	ss << ' ';
+	ss << msg->name2;
+	ss << ' ';
 	ss << msg->index;
 	ss << ' ';
 	ss << msg->index2; 
 	ss << ' ';
 	ss <<  msg->index3;
+	ss << ' ';
+	ss << msg->ID;
+	ss << ' ';
+	ss << msg->clientMachine;
+	ss << ' ';
+	ss << msg->clientMailbox;
 	char* d = new char[MaxMailSize];
 	strcpy(d, ss.str().c_str());
 	return d;
@@ -169,13 +177,18 @@ Message* decodeMessage(char* buf){
 	Message* message = new Message;
 	message->request = new char[2];
 	message->name = new char[20];
+	message->name2 = new char[20];
 	stringstream ss;
 	ss << buf;
 	ss >> message->request;
 	ss >> message->name;
+	ss >> message->name2;
 	ss >> message->index;
 	ss >> message->index2;
 	ss >> message->index3;
+	ss >> message->ID;
+	ss >> message->clientMachine;
+	ss >> message->clientMailbox;
 	return message;
 }
 
@@ -196,6 +209,10 @@ int nextTLB;					// next entry of the TLB to be written to
 int ** swapArray;
 int ** pageLocation;
 PageReplacementPolicy pageReplacementPolicy; // choose between FIFO or RAND replacement
+
+// Networking
+int numServers;
+int IDer;
 
 #ifdef FILESYS_NEEDED
 FileSystem  *fileSystem;
@@ -260,6 +277,9 @@ Initialize(int argc, char **argv)
     int argCount;
     char* debugArgs = "";
     bool randomYield = FALSE;
+    
+    bool isServer = FALSE, setNetname = FALSE;
+    IDer = 0;
 
 #ifdef USER_PROGRAM
     bool debugUserProg = FALSE;	// single step user program
@@ -304,7 +324,18 @@ Initialize(int argc, char **argv)
 	} else if (!strcmp(*argv, "-m")) {
 	    ASSERT(argc > 1);
 	    netname = atoi(*(argv + 1));
+	    setNetname = TRUE;
 	    argCount = 2;
+	}
+	if(!strcmp(*argv, "-nS")){
+    	ASSERT(argc > 1);
+        numServers = atoi(*(argv + 1));
+    	ASSERT(numServers > 0);
+    	ASSERT(numServers < 6);
+        printf("numServers: %d\n", numServers);
+    }
+	if (!strcmp(*argv, "-SERVER")) {
+		isServer = TRUE;
 	}
 #endif
     }
@@ -352,6 +383,12 @@ Initialize(int argc, char **argv)
 #ifdef NETWORK
     postOffice = new PostOffice(netname, rely, 10);
 	DEBUG('a', "NETWORK flags set \n");
+	
+	if(isServer && setNetname){
+		Thread* t = new Thread("server");
+		t->Fork((VoidFunctionPtr)Server, 1);
+		MessageHandler();
+	}
 #endif
 
 	// Added virtual memory objects 

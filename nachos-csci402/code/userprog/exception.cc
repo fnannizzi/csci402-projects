@@ -108,6 +108,8 @@ Lock* processLock[MAX_PROCESSES];
 Condition* processCV[MAX_PROCESSES];
 int mailboxCount = 0;
 
+
+
 int copyin(unsigned int vaddr, int len, char *buf) {
     // Copy len bytes from the current thread's virtual address vaddr.
     // Return the number of bytes so read, or -1 if an error occors.
@@ -434,51 +436,42 @@ void Exit_Syscall(int i) {
 	printf("Exit value: %d \n", i);
 	//currentThread->Finish(); // allow the current thread to exit
 	int id = currentThread->space->getID();
-	if (id == 0)
-	{
+	if (id == 0){
 		execLock->Acquire();
 		numProcessesExited++;
-		if (numProcessesExited == numProcesses)
-		{
+		if (numProcessesExited == numProcesses){
 			execLock->Release();
 			interrupt->Halt();
 		}
-		else
-		{
+		else{
 			execLock->Release();
 			currentThread->Finish();
 		}
 	}
-	else
-	{
+	else{
 		execLock->Acquire();
 		processLock[id]->Acquire();
 		processTable[id]->threadCount--;
-		if (processTable[id]->threadCount == 0)
-		{
+		if (processTable[id]->threadCount == 0){
 			numProcessesExited++;
-			if (numProcessesExited == numProcesses)
-			{
+			if (numProcessesExited == numProcesses){
 				processLock[id]->Release();
 				execLock->Release();
 				interrupt->Halt();
 			}
-			else
-			{
+			else{
 				processLock[id]->Release();
 				execLock->Release();
 				currentThread->Finish();
 			}
 		}
-		else
-		{
+		else{
 			processLock[id]->Release();
 			execLock->Release();
 			currentThread->Finish();
 		}
 	}
 	
-
 	/*int index = currentThread->space->getID(); // get address space/process ID
 	processLock[index]->Acquire(); // acquire lock on the process table
 	processTable[index]->threadCount--; // decrement threadcount to show this thread is exiting
@@ -509,7 +502,10 @@ int Acquire_Syscall(int index) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    //packetHeaderSend.to = 0;    
+        packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);  
+    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -519,9 +515,14 @@ int Acquire_Syscall(int index) {
     msg->request[1] = 'Q';
     msg->name = new char[20];
     msg->name = "Acquire";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = index; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -588,7 +589,9 @@ int Release_Syscall(int index) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    //packetHeaderSend.to = 0;    
+      packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);  
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -598,9 +601,14 @@ int Release_Syscall(int index) {
     msg->request[1] = 'L';
     msg->name = new char[20];
     msg->name = "Release";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = index; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -667,7 +675,8 @@ int Wait_Syscall(int iCV, int iLock) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -677,9 +686,14 @@ int Wait_Syscall(int iCV, int iLock) {
     msg->request[1] = 'T';
     msg->name = new char[20];
     msg->name = "Wait";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = iCV; //Maybe need to rename
     msg->index2 = iLock;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -766,7 +780,8 @@ int Signal_Syscall(int iCV, int iLock) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -776,9 +791,14 @@ int Signal_Syscall(int iCV, int iLock) {
     msg->request[1] = 'G';
     msg->name = new char[20];
     msg->name = "Signal";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = iCV; //Maybe need to rename
     msg->index2 = iLock;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -871,7 +891,8 @@ int Broadcast_Syscall(int iCV, int iLock) { // delete CV if no one is waiting on
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);   
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -881,9 +902,14 @@ int Broadcast_Syscall(int iCV, int iLock) { // delete CV if no one is waiting on
     msg->request[1] = 'C';
     msg->name = new char[20];
     msg->name = "Broadcast";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = iCV; //Maybe need to rename
     msg->index2 = iLock;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -988,7 +1014,9 @@ int CreateLock_Syscall(unsigned int vaddr, int len) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    //packetHeaderSend.to = 1;
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -998,12 +1026,17 @@ int CreateLock_Syscall(unsigned int vaddr, int len) {
     msg->request = new char[2];
     msg->request[0] = 'C';
     msg->request[1] = 'L';
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = len; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
-    
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
+  
 	char* msgstringstream = msgPrepare(msg);
-    
+    printf("message prepared: %s\n", msgstringstream);
    	mailHeaderSend.length = MSG_LENGTH;
    	postOffice->Send(packetHeaderSend,mailHeaderSend,msgstringstream);
     postOffice->Receive(currentThread->mailbox,&packetHeaderReceive,&mailHeaderReceive,receivedData);
@@ -1053,7 +1086,10 @@ int DestroyLock_Syscall(int index){
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+
+    //packetHeaderSend.to = 0;    
+        packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);  
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1063,9 +1099,14 @@ int DestroyLock_Syscall(int index){
     msg->request[1] = 'L';
     msg->name = new char[20];
     msg->name = "DestroyLock";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = index; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
    	mailHeaderSend.length = MSG_LENGTH;
@@ -1143,19 +1184,25 @@ int CreateCondition_Syscall(unsigned int vaddr, int len){
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;  
+    printf("Sent to Server%i\n",packetHeaderSend.to);  
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
-    Message* msg = new Message;
+    Message * msg = new Message;
     msg->name = new char[20];
     strcpy(msg->name, buf);
     msg->request = new char[2];
     msg->request[0] = 'C';
     msg->request[1] = 'C';
+    msg->name2 = new char[20];
+    msg->name2 = "CV";
     msg->index = len; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -1212,8 +1259,9 @@ int DestroyCondition_Syscall(int index){
     MailHeader mailHeaderSend,mailHeaderReceive;
     char* receivedData = new char[MaxMailSize];
     int returnValue;
-    
-    packetHeaderSend.to = 0;    
+   
+     packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);   
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1223,9 +1271,14 @@ int DestroyCondition_Syscall(int index){
     msg->request[1] = 'C';
     msg->name = new char[20];
     msg->name = "DestroyCV";
+    msg->name2 = new char[20];
+    msg->name2 = "Lock";
     msg->index = index; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -1302,7 +1355,8 @@ int CreateMV_Syscall(unsigned int vaddr, int len, int len2) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1312,9 +1366,14 @@ int CreateMV_Syscall(unsigned int vaddr, int len, int len2) {
     msg->request = new char[2];
     msg->request[0] = 'C';
     msg->request[1] = 'M';
+    msg->name2 = new char[20];
+    msg->name2 = "MV";
     msg->index = len; //Maybe need to rename
     msg->index2 = len2; //Array length
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -1349,7 +1408,8 @@ int DestroyMV_Syscall(int mv) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1359,9 +1419,14 @@ int DestroyMV_Syscall(int mv) {
     msg->request[1] = 'M';
     msg->name = new char[20];
     msg->name = "DestroyMV";
+    msg->name2 = new char[20];
+    msg->name2 = "MV";
     msg->index = mv; //Maybe need to rename
     msg->index2 = -1;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -1395,7 +1460,8 @@ int GetMV_Syscall(int mv, int index) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);     
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1405,9 +1471,14 @@ int GetMV_Syscall(int mv, int index) {
     msg->request[1] = 'M';
     msg->name = new char[20];
     msg->name = "GetMV";
+    msg->name2 = new char[20];
+    msg->name2 = "MV";
     msg->index = mv; //Maybe need to rename
     msg->index2 = index;
     msg->index3 = -1;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     
@@ -1440,7 +1511,8 @@ int SetMV_Syscall(int mv, int index, int value) {
     char* receivedData = new char[MaxMailSize];
     int returnValue;
     
-    packetHeaderSend.to = 0;    
+    packetHeaderSend.to = rand() % numServers;
+    printf("Sending to Server%i\n",packetHeaderSend.to);    
     mailHeaderSend.to = 0;
     mailHeaderSend.from = currentThread->mailbox;
     
@@ -1450,9 +1522,14 @@ int SetMV_Syscall(int mv, int index, int value) {
     msg->request[1] = 'M';
     msg->name = new char[20];
     msg->name = "SetMV";
+    msg->name2 = new char[20];
+    msg->name2 = "MV";
     msg->index = mv; //Maybe need to rename
     msg->index2 = index;
     msg->index3 = value;
+    msg->ID = -1;
+    msg->clientMachine = -1;
+    msg->clientMailbox = -1;
     
 	char* msgstringstream = msgPrepare(msg);
     

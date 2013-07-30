@@ -263,6 +263,7 @@ PostOffice::PostalDelivery()
 bool
 PostOffice::Send(PacketHeader pktHdr, MailHeader mailHdr, char* data)
 {
+	usleep(50);
     char* buffer = new char[MaxPacketSize];	// space to hold concatenated
 						// mailHdr + data
 
@@ -276,6 +277,41 @@ PostOffice::Send(PacketHeader pktHdr, MailHeader mailHdr, char* data)
     
     // fill in pktHdr, for the Network layer
     pktHdr.from = netAddr;
+    pktHdr.length = mailHdr.length + sizeof(MailHeader);
+
+    // concatenate MailHeader and data
+    bcopy((char *) &mailHdr, buffer, sizeof(MailHeader));
+    bcopy(data, buffer + sizeof(MailHeader), mailHdr.length);
+
+    sendLock->Acquire();   		// only one message can be sent
+					// to the network at any one time
+    bool success = network->Send(pktHdr, buffer);
+    messageSent->P();			// wait for interrupt to tell us
+					// ok to send the next message
+    sendLock->Release();
+
+    delete [] buffer;			// we've sent the message, so
+					// we can delete our buffer
+    return success;
+}
+
+bool
+PostOffice::PseudoSend(PacketHeader pktHdr, MailHeader mailHdr, char* data)
+{
+	usleep(50);
+    char* buffer = new char[MaxPacketSize];	// space to hold concatenated
+						// mailHdr + data
+
+    if (DebugIsEnabled('n')) {
+	printf("Post send: ");
+	PrintHeader(pktHdr, mailHdr);
+    }
+
+    ASSERT(mailHdr.length <= MaxMailSize);
+    ASSERT(0 <= mailHdr.to && mailHdr.to < numBoxes);
+    
+    // fill in pktHdr, for the Network layer
+    //pktHdr.from = netAddr;
     pktHdr.length = mailHdr.length + sizeof(MailHeader);
 
     // concatenate MailHeader and data
@@ -313,6 +349,7 @@ void
 PostOffice::Receive(int box, PacketHeader *pktHdr, 
 				MailHeader *mailHdr, char* data)
 {
+	usleep(50);
     ASSERT((box >= 0) && (box < numBoxes));
 
     boxes[box].Get(pktHdr, mailHdr, data);

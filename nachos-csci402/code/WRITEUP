@@ -1,1414 +1,832 @@
-Title: Writeup for Project 3, Summer 2013
-Date: 07/17/13
-Group Num 7: 	Name					Email				Student ID
-				Merrick Bautista		mlbautis@usc.edu		1134757772
-				Francesca Nannizzi	nannizzi@usc.edu		6330648898
-				Sonia Yang			soniayan@usc.edu		1576346062
-		
-		
-Quick guide to running our tests:
-	Most tests will be run alongside the server. The exceptions are the exec
-	and fork tests, which don't need the server. These tests can be run with
-	any inputs to random seed, while the other tests should not be run with a
-	random seed. 
+Title: Writeup for Project 4, Summer 2013
+Date: 07/27/13
+Group Num 7: 	Name				Email				Student ID
+				Merrick Bautista	mlbautis@usc.edu	1134757772
+				Francesca Nannizzi	nannizzi@usc.edu	6330648898
+				Sonia Yang			soniayan@usc.edu	1576346062
 	
-	To choose a page replacement policy, use the option -P {FIFO|RAND}. If you 
-	do not specify, FIFO is the default policy. It is important to put the
-	-P {FIFO|RAND} option before the -x {test_path} option.
-	
-	Exec:
-		From network, run nachos -x ../test/exec
-	Fork:
-		From network, run nachos -x ../test/fork_test
-		
-	Yield:
-		From network, run nachos -x ../test/yield
-		
-	For tests that are run with the server, open up two terminals. In one, run 
-	nachos -m 0 -SERVER. This starts up the server, which must be running before
-	any test that needs the server can run. In the other terminal, run the 
-	desired test.
-	
-	RUN SERVER: nachos -m 0 -SERVER
-	
-	CreateLock:
-		From network, run nachos -m 1 -x ../test/createlock
-		
-	DestroyLock:
-		From network, run nachos -m 1 -x ../test/destroylock
-	
-	AcquireLock:
-		From network, run nachos -m 1 -x ../test/acquirelock
-		
-	ReleaseLock:
-		From network, run nachos -m 1 -x ../test/releaselock
-		
-	CreateCondition:
-		From network, run nachos -m 1 -x ../test/createcondition
-	
-	DestroyCondition:
-		From network, run nachos -m 1 -x ../test/destroycondition
-		
-	Wait:
-		From network, run nachos -m 1 -x ../test/wait
-	
-	Signal:
-		From network, run nachos -m 1 -x ../test/signal
-		
-	Broadcast:
-		From network, run nachos -m 1 -x ../test/broadcast
-	
-	CreateMV:
-		From network, run nachos -m 1 -x ../test/createmv
-	
-	DestroyMV:
-		From network, run nachos -m 1 -x ../test/destroymv
-		
-	GetMV:
-		From network, run nachos -m 1 -x ../test/getmv
-		
-	SetMV:
-		From network, run nachos -m 1 -x ../test/setMV
-		
-				
+NOTE: We do not have a Part I as the person in our group who was assigned
+		to do it did not. We have talked to Professor Crowley and he is 
+		aware of this issue.
+
 I. Requirements
-		For part 1, we will need to implement a TLB. This TLB will store 
-	pages for quick translation. It needs to be invalidated on context
-	switches. It should also keep track of the dirty and use flags for 
-	each page set by hardware. To test, this we need to run 'matmult' and
-	'sort' with the EXEC syscall and make sure it executes properly. We
-	also need to run two instances of matmult with the EXEC syscall to 
-	ensure the two processes are not interfering with the data of the 
-	other.
-	
-		For part 2, we will implement virtual memory to make it seem we
-	have more memory than we actually have. We will need to evict pages
-	from the IPT and move them onto the disk or our swap file. We will 
-	need to make sure nothing is preloaded and we must keep track of 
-	whether certain pages are in memory, the swap file, the stack, or the
-	executable. We need to evict pages when memory is filled and keep 
-	track of all currently used pages in our inverted page table. We will
-	implement random page replacement and FIFO page replacement. We also
-	will show two programs larger than 32 pages can run to completion.
-	
-		For part 3, we will implement remote procedure calls for locks,
-	condition variables, and monitor variables. For the new MV syscalls,
-	we need to be able to create, destroy, set, and get. These need to be 
-	sent from a 'client' to a 'server'. The server should handle multiple
-	machines. The server will perform the system call and return back to
-	the client.
+		We are to alter our server code so that it works with multiple
+	servers. Our client programs will randomly select a server to send
+	syscalls to and the servers will communicate with each other to
+	do the appropriate work or return the appropriate value. No single
+	server will have all the locks, CVs, and MVs so they must communicate
+	and relay messages to the appropriate server that has the lock, CV,
+	or MV.
 
 II. Assumptions
-		We assumed that there could only be ten mailboxes per machine. 
-		We assumed there could be 500 max locks, 500 CVs, and 100 MVs.
-		We assumed there could be up to 1000 virtual pages and five
-			processes.
-		We assume we only have 32 physical pages of memory.
-		We assume the server will run forever and never terminate.
-		
-III. Design
-	Part 1 & 2
-		On a page fault, we will read from the Bad Virtual Address Reg
-	and determine the page number. With this, we will need to see if the
-	vpn is in the inverted page table. For our inverted page table, we
-	implement an actual IPT class with methods such as 
-	searchForEntry(vpn,processID) or chooseEvictonPageRandom(). If the
-	vpn is in the IPT, then we can populate the TLB which will be
-	described later. If the vpn is not in the TLB, then it needs to 
-	either go into an empty slot in the IPT or evict a current page from 
-	the IPT. If we need to evict a page, we can either do it randomly or
-	with FIFO. With the random implementation, we simply choose a random
-	page of the 32 slots in the IPT. However, if that page is currently 
-	in use, then we choose another random page until we get
-	one not in use. For FIFO, we implement a queue per process that
-	stores the appends the vpn coming in. It will the pop the front of
-	the queue to evict. Once we determine which page to evict, then we 
-	need to see if this page is in the TLB. If it is in the TLB, we need
-	to propagate the dirty bit from the TLB to the IPT. Then we need to
-	set the valid bit in the TLB as false. If the now propagated dirty 
-	bit in the IPT is in fact dirty, we need to copy ths to the swap
-	file. We will use a bitmap to search for the empty entry, and then
-	store this in a 2 dimensional array that stores offsets, with the 1st
-	index indicating the processID and the 2nd index indicating the vpn.
-	Then we write to the swapFile at this same location. We also need
-	to note that the page is now in the swapFile. To do this, we change
-	another 2 dimensional array with the same indices to show the
-	current location is now the swap file. Once this is all done, we 
-	look at the virtual address we are bringing in. If it is in the
-	executable, we read from there. Otherwise, we need to read from the
-	swap file according to the offset calculated when it was evicted.
-	Since this page has just been read by the current process, it is 
-	valid and not dirty. We then need to update the ipt with this new
-	page in the location that was just evicted. Now we need to update
-	the TLB. We can also get to this point if there was an empty slot 
-	in the IPT. If the page about to be evicted in the TLB is valid and 
-	is dirty, then we need to propagate the dirty bit into the IPT. We 
-	also need to set the use bit of the page we are about to evict to 
-	FALSE. Then we update the TLB entry with the page from the IPT. Then 
-	set the valid bit to true. Finally we increment the TLB counter and 
-	have sucessfully handled our page fault. We also had to edit our
-	ExceptionHandler to get the pagefault exception. We also had to
-	remove the preloading from the address space constructor.
+	We assume that when we signal or wait on a specific lock, we own the
+		lock. There is no check to see if it has been acquired.
+	We assume there could be up to 5000 locks, cvs, and mvs.
+		Note: These are limited to 500 in this case to make the outputs
+		look prettier, but the test will run with 5000.
+	We assumed there to be only ten mailboxes per machine.
+	We assume we only have 32 physical pages of memory.
+	We assume all locks, cvs, and mvs have unique names.
 	
-	Part 3
-		For Part 3, we needed to implement the server, change the 
-	system calls, and make new system calls for MVs. For the system
-	calls, we needed to basically take out all the code dealing with
-	the original system call. We still validated the name, but after that
-	we simply needed to package everything into a Message and send it to
-	the server. To compile our message, we used a stringstream to copy in
-	the name, request type, and whatever parameters it needed. 
-	We also set the mailHeader and the packetHeader and send the message
-	to the server. After sending it to the server, the server receives
-	the message and begins to decode it. Based off what it decodes,
-	it does the necessary commands that it should whether it be 
-	creating something, or setting an MV. After it does the appropriate
-	code and stores the appropriate data in the table, it sends a reply
-	message, possibly with a return value. With this return value in the
-	message that the system calls on the client side receive, they can
-	return the appropriate value.
+III. Design
+		We need to modify our server to recognize there are other servers
+	present as well. The message will first go from the user client to 
+	the randomly selected server. If the specific server does not have
+	the lock, cv, or mv, it does not necessarily mean it doesn't exist,
+	for it could simply be on another server. At this point we need to 
+	relay the message over to the server's message handler. This message
+	handler will relay the messages to the other servers to see if they
+	have the appropriate lock, cv, or mv. If one server replies 'YES',
+	then that server gains responsibility of the message and the first
+	server drops the message. If all the server replies 'NO', then the
+	original server will either send an error if it is not a create or
+	it will create the lock, cv, or mv.
 	
 IV. Implementation
-	Files Modified: userprog/exception.cc
-					userprog/syscall.h
-					userprog/addrspace.h
-					userprog/addrspace.cc
-					
-					threads/synch.h
-					threads/system.cc
-					threads/system.h
-					
-					machine/machine.h
-					
-					test/Makefile
-					test/start.s
-					
-					network/Makefile
-					network/nettest.cc
+	Files Modified: 
+					userprog/exception.cc
 	
-	Files Added:
-					test/fork_test.c
-					test/createmv.c
-					test/destroymv.c
-					test/getmv.c
-					test/setmv.c
+					test/Makefile
+					
+					network/nettest.cc
+					
+	Files Added:	
+					test/wait1.c
+					test/wait2.c
+					test/wait3.c
+					test/wait_test.c
+					test/signal1.c
+					test/signal2.c
+					test/signal3.c
+					test/signal_test.c
+					test/broadcast1.c
+					test/broadcast2.c
+					test/broadcast3.c
+					test/broadcast4.c
+					test/broadcast5.c
+					test/broadcast_test.c
 					
 	Data Structures Added:
-				threads/system.h
-					typedef struct Message {
-						char* name;
-						char* request;
-						int index, index2, index3;
-					};
-
-					enum PageReplacementPolicy { FIFO, RAND };
-				
-					class IPTTranslationEntry: public TranslationEntry {
-						public:
-							int processID;	
-					};
-					class InvertedPageTable {
-						public:
-							IPTTranslationEntry* table;
-							List * queue;
-							InvertedPageTable();					
-							~InvertedPageTable();					
-							void print();							
-							int searchForEntry(int, int);			
-							int searchForEmptyEntry();				
-							void updateEntry(int, int, int, bool);	
-							int chooseEvictionPageLRU();			
-							int chooseEvictionPageRandom();			
-					};
+					typedef struct InProgressMessage {
+						Message* message;
+						int yesReplies, noReplies;
+					};	
 					
-					PageReplacementPolicy pageReplacementPolicy; 
-					InvertedPageTable *ipt; 
-					Lock* iptLock;		
-					OpenFile* swapFile;
-					BitMap* swapFileMap;	
-					
-				userprog/addrspace.h
-					enum PageType 		{ CODE, DATA, STACK };
-					enum PageLocation 	{ SWAP_FILE, EXECUTABLE };
-					
-					class PTTranslationEntry: public TranslationEntry {
-						public:
-							PageType pageType;
-							PageLocation pageLocation;
-		
-							void print(int);
-							void setExecutableByteOffset(int offset);
-							int getExecutableByteOffset();
-							void setSwapByteOffset(int offset);
-							int getSwapByteOffset();
-	
-						private:
-							unsigned int executableByteOffset;	
-							unsigned int swapByteOffset;	
-					};
-					
-				network/nettest.cc
 					typedef struct ThreadID {
-						int machineID, threadID;
-						bool equals(int n) const;
-						bool equals(int m, int t) const;
-						void setIDs(int n); 
-						void setIDs(int m, int t);
+						int machineID, threadID;	
+						bool equals(int n) const { return ((machineID == n) && (threadID == n)); }
+						bool equals(int m, int t) const { return ((machineID == m) && (threadID == t)); }
+						void setIDs(int n) { machineID = n; threadID = n; }
+						void setIDs(int m, int t) { machineID = m; threadID = t; }
+						void getIDs() {printf("Machine ID: %i, Thread ID %i\n",machineID,threadID);}
 					};
-
-					enum ServerLockState { AVAILABLE, BUSY };
-
-					typedef struct ServerLock {
-						char* name;
-						ServerLockState state;
-						ThreadID* owner;
-						List* queue;
-						bool isToBeDeleted, isDeleted;
-					};
-
-					typedef struct ServerCondition {
-						char* name;
-						int lockIndex;
-						List* queue;
-						bool isToBeDeleted, isDeleted;	
-					};
-
-					typedef struct MonitorVariable {
-						char* name;
-						int* array, arraySize;
-						bool isToBeDeleted, isDeleted;
-					};
-		Data structures modified:
-				threads/thread.h
-					class Thread {
-						int mailbox;
-					}
-					- Used to store the mailbox which this thread accesses when
-					receiving messages from the post office
 					
-		Functions added:
-				threads/system.h
-					int nextTLB;				
-					void PrintTLB();			
-					void InvalidateAllTLB();	
-					int SearchForTLBEntry(int vpn);
-					void UpdateTLBEntry(int index, int paddr, int vaddr, bool 											dirtyBit, bool useBit, bool readOnlyBit, 											bool validBit);	
-					char* msgPrepare(Message* msg);
-					Message* decodeMessage(char* buf);
-				
-				userprog/exception.cc
-					void HandlePageFault();
-					
-					int CreateMV_Syscall(unsigned int vaddr, int len, int len2);
-					int DestroyMV_Syscall(int mv);
-					int GetMV_Syscall(int mv, int index);
-					int SetMV_Syscall(int mv, int index, int value);
-					
-				network/nettest.cc
-					Message* decodeMessage(char* buf);
-					bool sendMessage(PacketHeader outPktHdr, MailHeader 										 outMailHdr, Message* response);
-					bool sendErrorMessage(PacketHeader outPktHdr, MailHeader 											  outMailHdr, Message* response);
-					bool sendSuccessMessage(PacketHeader outPktHdr, MailHeader 												outMailHdr, Message* response);
-					
-					void constructServerLock(int index, char* buf);
-					int findLockByName(char* name);
-
-					void constructServerCondition(int index, char* buf);
-					int findConditionByName(char* name);
-					
-					void constructMonitorVariable(int index, int arraySize, 													  char* buf);
-					int findMonitorVariableByName(char* name);
-					
-					void Server();
-			
-			Functions modified:
-				userprog/exception.cc
-					void ExceptionHandler(ExceptionType which);
+					List messageQueue;
+					List inProgressMessages;
 	
-	
+	Functions Added:
+					network/nettest.cc
+						void MessageHandler();
+						void incrementYesReplies(int ptr);
+						void incrementNoReplies(int ptr);
+						bool sendToMessageHandler(PacketHeader outPktHdr, MailHeader outMailHdr, Message* response);
+						int findLockByName(char* name, int machineID);
+						int findConditionByName(char* name, int machineID);
+						int findMonitorVariableByName(char* name, int machineID);
+
 V. Testing
-	Exec:
-	- Starts two processes, each running the matmult.c test.
+
+	Lit of Test Names:
+		createlock_test
+		acquirelock
+		releaselock
+		destroylock
+		createcondition
+		wait_test
+		signal_test
+		broadcast_test
+		destroycondition
+		createmv
+		setmv
+		getmv
+		destroymv
+
+	Replace anything with a # with an appropriate value
+	
+	For each instance of nachos you would like to be a server:
+		nachos -m #machineID -SERVER -nS #numberOfServers
+			#machineID should be anything from 0 to #numberOfServers-1
+				They should all be unique
+			#numberOfServers is simply how many servers you plan to use
+				Should be anything from 1 to 5
+	For the instance of nachos you would like to be the client:
+		nachos -m #machineID -x ../test/#testName -rs #randomSeed -nS #numberOfServers
+			#machineID should be equal to or greater than #numberOfServers
+				Should be different than any server machineID
+			#testName will be whichever test you wish to run
+				Test names will be listed below
+			#randomSeed will be any value to determine randomization
+			#numberOfServers will be the same as before
+	
+	Tests:
+createlock_test
+	-Creates a lock, attempts to recreate the same lock, then makes a
+		second new lock
 		
-	Test output:
-		
-				Num Pages: 13
-				Num Pages: 55
-				Num Pages: 55
-				Exit value: 0 
-				Exit value: 7220 
-				Exit value: 7220 
-				Machine halting!
-				
-				Ticks: total 5187185, idle 0, system 3782050, user 1405135
-				Disk I/O: reads 0, writes 0
-				Console I/O: reads 0, writes 0
-				Paging: faults 0
-				Network I/O: packets received 0, sent 0
-				
-				Cleaning up...
-				
-	Fork:
-	- Runs a test that forks three threads, which each print a statement. 
+numServers: 5
+Num Pages: 13
+Num Pages: 19
+Exit value: 0 
+Test is creating a lock named lock1
+  Sending to Server1
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Lock created successfully at index 0100
+
+Test is creating another lock named lock1
+ LSending to Server4
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Lock already exists at index 0100
+  
+Test is creating another lock named lock2
+ LoSending to Server3
+message prepared: CL lock2 Lock 5 -1 -1 -1 -1 -1
+Lock2 created successfully at index 0300
+Exit value: 0 
+Machine halting!
+
+Ticks: total 1837954, idle 1836009, system 1740, user 205
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 3, sent 3
+
+Cleaning up...
+
+acquirelock
+	-attempts to acquire bad locks at indices -1 and 200, creates a lock
+		(it says index 0 but with unique ids it can end up as any
+		multiple of 200), acquires it, attempts to reacquire it, 
+		releases and destroys it, and then attempts to reacquire a 
+		destroyed lock
+
+numServers: 5
+Num Pages: 28
+
+Test is attempting to acquire lock at index -1
+Sending to Server3
+Lock not acquired
+
+Test is attempting to acquire lock at index 200
+Sending to Server4
+Lock not acquired
+
+Test is creating lock at index 0
+Sending to Server2
+message prepared: CL test Lock 4 -1 -1 -1 -1 -1
+Lock created successfully at index 0200
+
+Test is acquiring lock at index 0200
+Sending to Server4
+Lock acquired successfully from index 0200
+
+Test is attempting to reacquire lock at index 0200
+Sending to Server2
+Lock not acquired
+
+Test is releasing lock at index 0200
+Sending to Server2
+Lock released successfully from index 0200
+ 
+
+Test is attempting to destroy the lock at index 0200
+  LSending to Server0
+Lock at index 0200 destroyed successfully
+ 
+Test is attempting to acquire lock at index 0200
+   Sending to Server4
+Lock not acquired
+Exit value: 0 
+Machine halting!
+
+Ticks: total 2709584, idle 2705318, system 3840, user 426
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 8, sent 8
+
+Cleaning up...
+
+releaselock
+	-attempts to release lock at indices -1 and 200, then creates lock,
+		then attempts to release without acquiring, then actually
+		acquires, then actually releases, destroys the lock, and
+		attempts to release a destroyed lock
+numServers: 5
+Num Pages: 28
+
+Test is attempting to release a lock at index -1
+Sending to Server4
+Lock not released
+
+Test is attempting to release a lock at index 200
+Sending to Server1
+Lock not released
+
+Test is creating a lock at index 0
+Sending to Server4
+message prepared: CL test Lock 4 -1 -1 -1 -1 -1
+Lock created successfully at index 0400
+
+Test is attempting to release lock at index 0400 without acquiring
+Sending to Server4
+Lock not released
+
+Test is acquiring lock at index 0400
+Sending to Server1
+Lock acquired successfully from index 0400
+
+Test is releasing lock at index 0400
+Sending to Server3
+Lock at index 0400 released successfully
+
+Test is destroying previously released lock at index 0400
+ LoSending to Server4
+Lock at index 0400 set to be destroyed
+ 
+Test is attempting to release previously destroyed lock at index 0400
+   Sending to Server4
+Lock not released
+Exit value: 0 
+Machine halting!
+
+Ticks: total 2440869, idle 2436387, system 4050, user 432
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 8, sent 8
+
+Cleaning up...
+
+destroylock
+	-attempts to destroy locks at indices -1 and 200, then creates a lock
+	and acquires it and releases it, destroys it, and attempts to
+	acquire it again but fails since it has been destroyed
+
+numServers: 5
+Num Pages: 27
+
+Test is attempting to destroy a lock at index -1
+Sending to Server4
+Lock not set to be destroyed
+
+Test is attempting to destroy a lock at index 200
+Sending to Server1
+Lock not set to be destroyed
+
+Test is creating a lock at index 0
+Sending to Server0
+message prepared: CL test Lock 4 -1 -1 -1 -1 -1
+Lock created successfully at index 00
+
+Test is acquiring lock at index 00
+Sending to Server0
+Lock acquired successfully from index 00
+
+Test is releasing lock at index 00
+Sending to Server4
+Lock released successfully from index 00
+ 
+
+Test is attempting to destroy previously released lock at index 00
+Sending to Server2
+Lock at index 00 set to be destroyed
+ 
+Test is acquiring lock at index 00
+Sending to Server4
+Lock not acquired because it has been destroyed
+ Exit value: 0 
+Machine halting!
+
+Ticks: total 2450592, idle 2446801, system 3420, user 371
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 7, sent 7
+
+Cleaning up...
+
+createcondition
+	-creates a condition, attempts to recreate the same condition, and
+		creates a new condition
+
+numServers: 5
+Num Pages: 13
+Num Pages: 20
+Exit value: 0 
+----------------------------------
+ Beginning CreateCondition test.
+  ----------------------------------
+ Test is creating a condition named condition1
+  Sent to Server3
+Condition created successfully at index 0300
+  ----------------------------------
+ Test is attempting to create another condition named condition1
+  Sent to Server4
+Condition already exists at index 0300
+ c----------------------------------
+ Test is creating another condition named condition2
+  Sent to Server3
+Condition created successfully at index 0301
+  Exit value: 0 
+Machine halting!
+
+Ticks: total 2039632, idle 2037145, system 2230, user 257
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 3, sent 3
+
+Cleaning up...
+
+wait_test
+	-Note the distinction between 'Test' and 'Test2'
+	-Note there are also some long yields to ensure signals are sent
+		after the waits so it takes a few seconds to run
+	-Test creates a lock and CV then acquires the lock and waits on the
+		CV, Test2 acquires the lock, signals with the CV, and releases 
+		the lock, Test is awoken and reacquires the lock, then it
+		tries to wait on bad CVs and bad locks
+
+numServers: 5
+Num Pages: 13
+Num Pages: 16
+Test is creating a lock named lock1
+  Sending to Server1
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Num Pages: 21
+Num Pages: 19
+Exit value: 0 
+Lock created successfully at index 0100
+
+Test is creating a cv named cv1
+   Sent to Server1
+CV created successfully at index 0100
+Exit value: 0 
+Sending to Server4
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server1
+
+Test is acquiring lock at index 0100
+Sending to Server1
+Lock acquired successfully from index 0100
+
+Test is waiting on CV1
+  Sending to Server4
+Sending to Server3
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server1
+
+Test2 is acquiring lock at index 0100
+Sending to Server3
+Lock acquired successfully from index 0100
+
+Test2 is signalling the waiter
+ Sending to Server1
+
+Test2 is releasing lock at index 0100
+Sending to Server4
+Lock at index 0100 released successfully
+Exit value: 0 
+
+Test has been signalled and has reacquired the lock
+  
+Test is waiting on CV at index -1
+ 
+Sending to Server0
+Test not able to wait on the CV
+
+Test is waiting on CV that is NULL
+  Sending to Server4
+Test not able to wait on the CV
+
+Test is waiting on lock at index -1
+  Sending to Server2
+Test not able to wait on the CV
+
+Test is waiting on lock at index 200
+  Sending to Server4
+Test not able to wait on the CV
+Exit value: 0 
+Machine halting!
+
+Ticks: total 9415950, idle 4340380, system 4765770, user 309800
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 15, sent 15
+
+Cleaning up...
+
+signal_test
+	-Same notes as the wait_test
+	-Test creates a lock and CV, acquires it then waits, then Test2
+		acquires the lock and signals using invalid CVs and locks, then
+		finally signals on the correct one and releases, and as a 
+		result Test wakes up and reacquires the lock
+
+
+numServers: 5
+Num Pages: 13
+Num Pages: 16
+Test is creating a lock named lock1
+  Sending to Server3
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Num Pages: 17
+Num Pages: 24
+Exit value: 0 
+Lock created successfully at index 0300
+
+Test is creating a cv named cv1
+   Sent to Server1
+CV created successfully at index 0100
+Exit value: 0 
+Sending to Server3
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server4
+
+Test is acquiring lock at index 0300
+Sending to Server0
+Lock acquired successfully from index 0300
+
+Test is waiting on CV1
+  Sending to Server3
+Sending to Server4
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server0
+
+Test2 is acquiring lock at index 0300
+Sending to Server3
+Lock acquired successfully from index 0300
+
+Test2 is signalling the waiter using CV at index -1
+  Sending to Server3
+Test2 not able to signal on the CV
+
+Test2 is signalling the waiter using CV at index 10000
+  Sending to Server3
+Test2 not able to signal on the CV
+
+Test2 is signalling the waiter using CV at index 143
+  Sending to Server2
+Test2 not able to signal on the CV
+
+Test2 is signalling the waiter using lock at index -1
+ 
+Sending to Server4
+Test2 not able to signal on the CV
+
+Test2 is signalling the waiter using lock at index 5698
+  Sending to Server3
+Test2 not able to signal on the CV
+
+Test2 is signalling the waiter
+ Sending to Server2
+
+Test2 is releasing lock at index 0300
+Sending to Server3
+Lock at index 0300 released successfully
+Exit value: 0 
+
+Test has been signalled and has reacquired the lock
+  Exit value: 0 
+Machine halting!
+
+Ticks: total 8687942, idle 4533648, system 3871320, user 282974
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 16, sent 16
+
+Cleaning up...
+
+broadcast_test
+	-Same distinctions as before except there will also be a 'Test5'
+	-Test creates a lock, CV, acquires the lock and waits on the CV,
+		Test2 also acquires the lock and waits on the CV, then Test5
+		attempts to broadcast on bad CVs and locks, and finally 
+		proceeds to broadcast on the proper CV and lock, and then 
+		releases the lock, then Test and Test2 are awoken, reacquire
+		the lock and releases
 	
-	Test output:
-			Num Pages: 13
-			Num Pages: 16
-			Exit value: 0 
-			Exit value: 0 
-			Test0
-			Exit value: 0 
-			Test1
-			Exit value: 0 
-			Test2
-			Exit value: 0 
-			Machine halting!
+numServers: 5
+Num Pages: 13
+Num Pages: 23
+Num Pages: 20
+Test is creating a lock named lock1
+  Num Pages: 24
+Sending to Server4
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Exit value: 0 
+Lock created successfully at index 0400
 
-			Ticks: total 4624, idle 0, system 2360, user 2264
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 0, sent 0
+Test is creating a cv named cv1
+   Sent to Server3
+CV created successfully at index 0300
 
-			Cleaning up...
-			
-	Yield:
-	- Tests the Yield_Syscall by calling it 100 times in a row. The output
-	prints each time the thread is ready to run.
-			
-	Test output:
-		
-			----------------------------------
-			Beginning yield test
-			----------------------------------
-			Yield: 0
-			Yield: 1
-			
-			...
-						
-			Yield: 98
-			Yield: 99
-			No threads ready or runnable, and no pending interrupts.
-			Assuming the program completed.
-			Machine halting!
-						
-			Ticks: total 5111, idle 0, system 1240, user 3871
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 0, sent 0
-						
-			Cleaning up...
+Test is acquiring lock at index 0400
+Sending to Server1
+Lock acquired successfully from index 0400
 
-	CreateLock:
-	- Tests the CreateLock_Syscall and server by creating a lock, which
-	succeeds. Then it attempts to create another lock with the same name,
-	but the server returns the index of the previous lock as it should. 
-	Finally, the test creates another lock with a different name, which 
-	succeeds.
-			
-	Test output:
-		Test: 
-			Num Pages: 13
-			Num Pages: 19
-			Exit value: 0 
-			Test is creating a lock named lock1
-			Lock created successfully at index 00		
-			Test is creating another lock named lock1
-			Lock already exists at index 00
-			Test is creating another lock named lock2
-			Lock created successfully at index 01
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 23788, idle 22043, system 1540, user 205
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 3, sent 3
-			
-			Cleaning up...
-			
-		Server:
-			Server has received a message: CL lock1 5 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CL lock1 5 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CL lock2 5 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
+Test is waiting on CV1
+  Sending to Server4
+Sending to Server3
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server0
 
-			Cleaning up...
+Test2 is acquiring lock at index 0400
+Sending to Server3
+Lock acquired successfully from index 0400
 
-	DestroyLock:
-	- The test attempts to destroy locks at two invalid indexes. Then it creates
-	a lock successfully, acquires it, releases it, and destroys it.
-	
-	Test output:
-	
-		Test:	
-			Num Pages: 22
-			
-			Test is attempting to destroy a lock at index -1
-			Lock not set to be destroyed
-			
-			Test is attempting to destroy a lock at index 200
-			Lock not set to be destroyed
-			
-			Test is creating a lock at index 0
-			Lock created successfully at index 0
-			
-			Test is acquiring lock at index 0
-			Lock acquired successfully from index 0
-			
-			Test is releasing lock at index 0
-			Lock released successfully from index 0
-			
-			Test is attempting to destroy previously released lock at index 0
-			Lock at index 0 set to be destroyed
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 21693, idle 19384, system 2070, user 239
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 5, sent 5
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: DL DestroyLock -1 -1 -1
-			Server has decoded DestroyLock request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DL DestroyLock 200 -1 -1
-			Server has decoded DestroyLock request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CL test 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DL DestroyLock 0 -1 -1
-			Server has decoded DestroyLock request from machine1 mailbox0 
-			Server has received valid lock index from machine1 mailbox0 
-			-----------------------------------------------
+Test2 is waiting on CV1
+  Sending to Server1
+Sending to Server2
+message prepared: CL lock1 Lock 5 -1 -1 -1 -1 -1
+Sent to Server0
 
-			Cleaning up...
-			
-	AcquireLock:
-	- The test tries to acquire a lock at two invalid indexes, then creates a
-	lock and acquires it successfully. It tries to reacquire the lock, which
-	fails. Then it releases the lock and destroys it successfully. Finally, the
-	test tries to acquire the destroyed lock again, which fails.
-	
-	Test output:
-		Test:
-			Num Pages: 26
-			
-			Test is attempting to acquire lock at index -1
-			Lock not acquired
-			
-			Test is attempting to acquire lock at index 200
-			Lock not acquired
-			
-			Test is creating lock at index 0
-			Lock created successfully at index 0
-			
-			Test is acquiring lock at index 0
-			Lock acquired successfully from index 0
-			
-			Test is attempting to reacquire lock at index 0
-			Lock not acquired
-			
-			Test is releasing lock at index 0
-			Lock released successfully from index 0
-			
-			Test is attempting to destroy the lock at index 0
-			LoLock at index 0 destroyed successfully
-			
-			Test is attempting to acquire lock at index 0
-			Lock not acquired
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 28776, idle 25107, system 3300, user 369
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 8, sent 8
-			
-			Cleaning up...
-			
-		Server:
-			Server has received a message: AQ Acquire -1 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 200 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CL test 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			Server has received request to reacquire lock already owned by 
-			machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DL DestroyLock 0 -1 -1
-			Server has decoded DestroyLock request from machine1 mailbox0 
-			Server has received valid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			Server has received index of deleted lock from machine1 mailbox0 
-			-----------------------------------------------
+Test5 is acquiring lock at index 0400
+Sending to Server4
+Lock acquired successfully from index 0400
 
-			Cleaning up...
+Test 5 is broadcasting on CV at index -1
+  Sending to Server2
+Test 5 not able to broadcast on the CV
+ 
+Test 5 is broadcasting on CV at index 6000
+  Sending to Server2
+Test 5 not able to broadcast on the CV
+ 
+Test 5 is broadcasting on NULL CV
+ 
+Sending to Server1
+Test 5 not able to broadcast on the CV
+ 
+Test 5 is broadcasting on lock at index -1
+  Sending to Server1
+Test 5 not able to broadcast on the CV
+ 
+Test 5 is broadcasting on lock at index 7000
+  Sending to Server1
+Test 5 not able to broadcast on the CV
+ 
+Test5 is signalling the waiters
+ 
+Test 5 is broadcasting
+  Sending to Server0
 
-	ReleaseLock:
-	- The test tries to release a lock at two invalid indexes, then creates a
-	lock and attempts to release it before acquiring it, which fails. The test
-	then acquires and releases the lock successfully. The test destroys the lock
-	successfully. Finally, the test tries to release the destroyed lock again,
-	which fails.
-	
-	Test output:
-		Test:
-			Num Pages: 27
-			
-			Test is attempting to release a lock at index -1
-			Lock not released
-			
-			Test is attempting to release a lock at index 200
-			Lock not released
-			
-			Test is creating a lock at index 0
-			Lock created successfully at index 0
-			
-			Test is attempting to release lock at index 0 without acquiring
-			Lock not released
-			
-			Test is acquiring lock at index 0
-			Lock acquired successfully from index 0
-			
-			Test is releasing lock at index 0
-			Lock at index 0 released successfully
-			
-			Test is destroying previously released lock at index 0
-			Lock at index 0 set to be destroyed
-			
-			Test is attempting to release previously destroyed lock at index 0
-			Lock not released
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 29733, idle 26248, system 3120, user 365
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 8, sent 8
-			
-			Cleaning up...
-			
-		Server:
-			Server has received a message: RL Release -1 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 200 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			Server has received invalid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CL test 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			Server has received request to release lock at index 0 not owned by
-			machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DL DestroyLock 0 -1 -1
-			Server has decoded DestroyLock request from machine1 mailbox0 
-			Server has received valid lock index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox0 
-			Server has received index of deleted lock from machine1 mailbox0
-			-----------------------------------------------
+Test5 is releasing lock at index 0400
+Sending to Server1
+Lock at index 0400 released successfully
+Exit value: 0 
 
-			Cleaning up...
+Test has been signalled and has reacquired the lock
+  
+Test is releasing lock at index 0400
+Sending to Server2
+Lock at index 0400 released successfully
+Exit value: 0 
 
-	CreateCondition:
-	- The test creates a condition successfully, then attempts to create another
-	condition with the same name. The server returns the index of the existing 
-	condition, as it should. Then the test creates another condition with a
-	different name, which succeeds.
-	
-	Test output:
-		Test:
-			Num Pages: 13
-			Num Pages: 20
-			Exit value: 0 
-			----------------------------------
-			Beginning CreateCondition test.
-			----------------------------------
-			Test is creating a condition named condition1
-			Condition created successfully at index 00
-			----------------------------------
-			Test is attempting to create another condition named condition1
-			Condition already exists at index 00
-			c----------------------------------
-			Test is creating another condition named condition2
-			Condition created successfully at index 01
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 18835, idle 16628, system 1950, user 257
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 3, sent 3
-			
-			Cleaning up...
+Test2 has been signalled and has reacquired the lock
+  
+Test2 is releasing lock at index 0400
+Sending to Server1
+Lock at index 0400 released successfully
+Exit value: 0 
+Machine halting!
 
-		Server:
-		Server has received a message: CC condition1 11 -1 -1
-		Server has decoded CreateCondition request from machine1 mailbox0
-		-----------------------------------------------
-		Server has received a message: CC condition1 11 -1 -1
-		Server has decoded CreateCondition request from machine1 mailbox0 
-		-----------------------------------------------
-		Server has received a message: CC condition2 11 -1 -1
-		Server has decoded CreateCondition request from machine1 mailbox0 
-		-----------------------------------------------
+Ticks: total 15289211, idle 6874163, system 7926860, user 488188
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 20, sent 20
 
-		Cleaning up...
+Cleaning up...
 
-	DestroyCondition:
-	- The test attempts to destroy a condition which hasn't been created, which
-	fails. Next it creates a condition and destroys it successfully. It then 
-	tries to destroy the condition again, which fails.
-	
-	Test output:
-		Test:
-			Num Pages: 21
-			----------------------------------
-			Beginning DestroyCondition test
-			----------------------------------
-			Test is attempting to destroy a condition that hasn't been created
-			CCondition not destroyed
-			----------------------------------
-			Test is creating a condition named condition1
-			Condition created successfully at index 00
-			----------------------------------
-			Test is destroying condition1
-			Condition destroyed successfully at index 00
-			T----------------------------------
-			Test is attempting to destroy condition1 again
-			Condition destroyed successfully at index 00
-			TExit value: 0 
-			Machine halting!
-			
-			Ticks: total 22904, idle 20467, system 2180, user 257
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 4, sent 4
-			
-			Cleaning up...
 
-		Server:
-			Server has received a message: DC DestroyCV 0 -1 -1
-			Server has decoded DestroyCondition request from machine1 mailbox0 
-			Server has received invalid condition index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CC condition1 11 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DC DestroyCV 0 -1 -1
-			Server has decoded DestroyCondition request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DC DestroyCV 0 -1 -1
-			Server has decoded DestroyCondition request from machine1 mailbox0 
-			-----------------------------------------------
+destroycondition
+	-test attempts to destroy condition that does not exist, then it
+		creates the condition, destroys it, and tries to redestroy it
+		but it is already destroyed
 
-			Cleaning up...
+numServers: 5
+Num Pages: 22
+----------------------------------
+ Beginning DestroyCondition test
+  ----------------------------------
+ Test is attempting to destroy a condition that hasn't been created
+ CSending to Server0
+Condition not destroyed
+  ----------------------------------
+ Test is creating a condition named condition1
+  Sent to Server4
+Condition created successfully at index 0400
+  ----------------------------------
+ Test is destroying condition1
+  Sending to Server4
+Condition destroyed successfully at index 0400
+ T----------------------------------
+ Test is attempting to destroy condition1 again
+ CSending to Server3
+Condition already destroyed successfully at index 0400
+ Exit value: 0 
+Machine halting!
 
-	Wait:
-	- First tests various invalid indexes for both the lock and condition, which
-	fails until given a correct index (non-normative test). Then begins a test
-	with one waiting thread and one signaller, which proceeds normally and
-	succeeds (normative test).
-	
-	Test output:
-		Test:
-			Num Pages: 13
-			Num Pages: 26
-			----------------------------------
-			Beginning non-normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is waiting before acquiring the lock
-			Thread 1 not able to wait on the CV
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting with an invalid CV index
-			Thread 1 not able to wait on the CV
-			Thread 1 is waiting with an invalid lock index
-			TThread 1 not able to wait on the CV
-			Thread 1 is waiting on a signal
-			Thread 2 is acquiring the lock
-			Thread 2 is signalling the waiter
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Num Pages: 23
-			Exit value: 0 
-			----------------------------------
-			Beginning normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting on a signal
-			Thread 2 is acquiring the lock
-			Thread 2 is signalling the waiter
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 95333, idle 6673, system 69130, user 19530
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 19, sent 19
-			
-			Cleaning up...
+Ticks: total 1803742, idle 1801269, system 2210, user 263
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 4, sent 4
 
-		Server:
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox1 
-			Server has received request to wait on condition at index 0, but 				lock not owned by machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: WT Wait -1 0 -1
-			Server has decoded Wait request from machine1 mailbox1 
-			Server has received invalid condition index from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 -1 -1
-			Server has decoded Wait request from machine1 mailbox1 
-			Server has received invalid lock index from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has d	ecoded Wait request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 0 -1
-			Server has decoded Signal request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 0 -1
-			Server has decoded Signal request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox4 
-			-----------------------------------------------
+Cleaning up...
 
-			Cleaning up...
+createmv
+	-creates an MV with an invalid size, creates one with a size of 1,
+		then attempts to recreate the same MV
 
-	Signal:	
-	-  Tests signalling on various invalid indexes for both the lock and
-	condition, which fails until given a correct index (non-normative test).
-	Then begins a test with one waiting thread and one signaller, which proceeds
-	normally and succeeds (normative test).
-	
-	Test output:
-		Test:
-			Num Pages: 13
-			Num Pages: 26
-			----------------------------------
-			Beginning non-normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting on a signal
-			Thread 2 is signalling the waiter before acquiring the lock
-			Thread 2 not able to signal on the CV
-			Thread 2 is acquiring the lock
-			Thread 2 is signalling the waiter with an invalid CV index
-			TThread 2 not able to signal on the CV
-			Thread 2 is signalling the waiter with an invalid lock index
-			Thread 2 not able to signal on the CV
-			Thread 2 is signalling the waiter
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Num Pages: 23
-			Exit value: 0 
-			----------------------------------
-			Beginning normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting on a signal
-			Thread 2 is acquiring the lock
-			Thread 2 is signalling the waiter
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 63196, idle 6373, system 43170, user 13653
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 19, sent 19
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 0 -1
-			Server has decoded Signal request from machine1 mailbox2 
-			Server has received request to signal on condition at index 0, but 				lock not owned by machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: SG Signal -1 0 -1
-			Server has decoded Signal request from machine1 mailbox2 
-			Server has received invalid condition index from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 -1 -1
-			Server has decoded Signal request from machine1 mailbox2 
-			Server has received invalid lock index from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 0 -1
-			Server has decoded Signal request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: SG Signal 0 0 -1
-			Server has decoded Signal request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox4 
-			-----------------------------------------------
+numServers: 5
+Num Pages: 18
+Test is creating an MV named mv with size 0
+ Sending to Server1
+MV not created
+ 
+Test is creating an MV named mv with size 1
+  Sending to Server1
+MV created successfully at index 0100
 
-			Cleaning up...
-		
-	Broadcast:
-	- Tests broadcasting on various invalid indexes for both the lock and
-	condition, which fails until given a correct index (non-normative test).
-	Then begins a test with two waiting threads and one broadcaster, which
-	proceeds normally and succeeds (normative test).
-					
-	Test output:
-		Test:
-			Num Pages: 13
-			Num Pages: 34
-			----------------------------------
-			Beginning non-normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting on a signal
-			Thread 2 is acquiring the lock
-			Thread 2 is waiting on a signal
-			Thread 3 is broadcasting before acquiring the lock
-			TThread 3 not able to broadcast on the CV
-			Thread 3 is acquiring the lock
-			Thread 3 is broadcasting with an invalid CV index
-			Thread 3 not able to broadcast on the CV
-			Thread 3 is broadcasting with an invalid lock index
-			Thread 3 not able to broadcast on the CV
-			Thread 3 is broadcasting with a null CV index
-			Thread 3 not able to broadcast on the CV
-			Thread 3 is broadcasting with a null lock index
-			Thread 3 not able to broadcast on the CV
-			Thread 3 is broadcasting the waiters
-			Thread 3 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Thread 2 has been signalled
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Num Pages: 28
-			Exit value: 0 
-			----------------------------------
-			Beginning normative test
-			----------------------------------
-			Exit value: 0 
-			Thread 1 is acquiring the lock
-			Thread 1 is waiting on a signal
-			Thread 2 is acquiring the lock
-			Thread 2 is waiting on a signal
-			Thread 3 is acquiring the lock
-			Thread 3 is broadcasting
-			Thread 3 is releasing the lock
-			Exit value: 0 
-			Thread 1 has been signalled
-			Thread 1 is releasing the lock
-			Exit value: 0 
-			Thread 2 has been signalled
-			Thread 2 is releasing the lock
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 178216, idle 7664, system 140110, user 30442
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 27, sent 27
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 0 0 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			Server has received request to broadcast on condition at index 0, 				but lock not owned by machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast -1 0 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			Server has received invalid condition index from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 0 -1 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			Server has received invalid lock index from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 50 0 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			Server has received invalid condition index from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 0 50 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			Server has received invalid lock index from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 0 0 -1
-			Server has decoded Broadcast request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox3 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox1 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox2 
-			-----------------------------------------------
-			Server has received a message: CL lock 4 -1 -1
-			Server has decoded CreateLock request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: CC CV 2 -1 -1
-			Server has decoded CreateCondition request from machine1 mailbox4 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox6 
-			-----------------------------------------------
-			Server has received a message: WT Wait 0 0 -1
-			Server has decoded Wait request from machine1 mailbox6 
-			-----------------------------------------------
-			Server has received a message: AQ Acquire 0 -1 -1
-			Server has decoded Acquire request from machine1 mailbox7 
-			-----------------------------------------------
-			Server has received a message: BC Broadcast 0 0 -1
-			Server has decoded Broadcast request from machine1 mailbox7 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox7 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox5 
-			-----------------------------------------------
-			Server has received a message: RL Release 0 -1 -1
-			Server has decoded Release request from machine1 mailbox6 
-			-----------------------------------------------
+Test is creating another MV named mv with size 1
+  Sending to Server1
+MV already exists at index 0100
+ Exit value: 0 
+Machine halting!
 
-			Cleaning up...
-			
-	CreateMV:
-	- This test first creates a new monitor variable but gives an invalid size 
-	of 0. Then it makes a monitor variable of size 1, which is successful.
-	Then it attempts to create another monitor variable with the same name as
-	the monitor variable already created. The server returns the same index of 
-	the first variable, as it should.
-	
-	Test output:
-		Test:
-			Num Pages: 18
-			Test is creating an MV named mv with size 0
-			MV not created
-			Test is creating an MV named mv with size 1
-			MV created successfully at index 00
-			Test is creating another MV named mv with size 1
-			MV created successfully at index 00
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 16962, idle 15333, system 1470, user 159
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 3, sent 3
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: CM mv 5 0 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			Server has received invalid array size from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CM mv 5 1 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CM mv 5 1 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			-----------------------------------------------
+Ticks: total 760594, idle 758651, system 1780, user 163
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 3, sent 3
 
-			Cleaning up...
-		
-	DestroyMV:
-	- This test first tries to destroy a monitor variable at two invalid
-	indexes, which fails. Then it creates and destroys a monitor variable 
-	successfully.
-	
-	Test output:
-		Test:
-			Num Pages: 19
-			Test is trying to destroy an MV at index -1
-			MV not destroyed
-			Test is trying to destroy an MV at index 501
-			MV not destroyed
-			Test is creating an MV named mv
-			MV created successfully at index 00
-			Test is trying to destroy an MV at index 0
-			MV destroyed successfully at index 00
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 18608, idle 16627, system 1790, user 191
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 4, sent 4
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: DM DestroyMV -1 -1 -1
-			Server has decoded DestroyMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DM DestroyMV 501 -1 -1
-			Server has decoded DestroyMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CM mv 5 1 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: DM DestroyMV 0 -1 -1
-			Server has decoded DestroyMV request from machine1 mailbox0 
-			-----------------------------------------------
+Cleaning up...
 
-			Cleaning up...
-	
-	GetMV:
-	- This test first tries to get an uninitialized monitor variable, and then
-	tries to get monitor variables at invalid indexes, which fails. Then the 
-	test creates a monitor variable and sets its value to 5. The test attempts
-	to get the value of the monitor variable using the wrong indexes again, then
-	gets the value successfully using the correct index.
-	
-	Test output:
-		Test:
-			Num Pages: 25
-			Test is getting uninitialized MV
-			MV not gotten
-			Test is getting invalid MV (-1)
-			MV not gotten
-			Test is getting invalid MV (550)
-			MV not gotten
-			Test is creating an MV named mv
-			MV created successfully at index 00
-			Test is setting mv[1] to be 5
-			mv[1] was set to be 5
-			Test is getting mv[-1]
-			mv[-1] not gotten
-			Test is getting mv[590]
-			mv[590] not gotten
-			Test is getting mv[1]
-			mv[1] is 5
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 24128, idle 21061, system 2730, user 337
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 8, sent 8
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: GM GetMV 0 1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV -1 1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV 550 1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CM mv 5 5 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV 0 1 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV 0 -1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			Server has received invalid MV array index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV 0 590 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			Server has received invalid MV array index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV 0 1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			-----------------------------------------------
+getmv
+	-test tries to get a NULL MV, then it attempts to get some invalid 
+		MVs, then it creates an MV, sets mv[1] to 5, attempts to get
+		bad indices, and then gets mv[1] which is 5
 
-			Cleaning up...
-			
-	SetMV:
-	- This test first tries to set an uninitialized monitor variable, and then
-	tries to set monitor variables at invalid indexes, which fails. Then the 
-	test creates a monitor variable successfully. The test attempts to set the
-	value of the monitor variable using the wrong indexes again, then
-	sets the value successfully using the correct index. The test gets the 
-	value of the monitor variable as proof that it was set correctly.
-	
-	Test output:
-		Test:
-			Num Pages: 24
-			Test is setting a non-existent MV to be 5
-			MV not set
-			Test is setting an invalid MV (-1) to be 5
-			MV not set
-			Test is setting an invalid MV (700) to be 5
-			MV not set
-			Test is creating an MV named mv
-			MV created successfully at index 00
-			Test is setting mv[-1] to be 5
-			mv[-1] not set
-			Test is setting mv[600] to be 5
-			mv[600] not set
-			Test is setting mv[1] to be 5
-			mv[1] was set to be 5
-			Test is getting mv[1]
-			mv[1] is 5
-			Exit value: 0 
-			Machine halting!
-			
-			Ticks: total 26416, idle 23159, system 2910, user 347
-			Disk I/O: reads 0, writes 0
-			Console I/O: reads 0, writes 0
-			Paging: faults 0
-			Network I/O: packets received 8, sent 8
-			
-			Cleaning up...
-		
-		Server:
-			Server has received a message: SM SetMV 1 0 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV -11 0 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV 700 0 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			Server has received invalid MV index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: CM mv 5 5 -1
-			Server has decoded CreateMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV 0 -1 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			Server has received invalid MV array index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV 0 600 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			Server has received invalid MV array index from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: SM SetMV 0 1 5
-			Server has decoded SetMV request from machine1 mailbox0 
-			-----------------------------------------------
-			Server has received a message: GM GetMV 0 1 -1
-			Server has decoded GetMV request from machine1 mailbox0 
-			-----------------------------------------------
+numServers: 5
+Num Pages: 25
+Test is getting uninitialized MV
+ Sending to Server3
+MV not gotten
+ 
+Test is getting invalid MV (-1)
+  Sending to Server3
+MV not gotten
+ 
+Test is getting invalid MV (550)
+  Sending to Server3
+MV not gotten
+ 
+Test is creating an MV named mv
+  Sending to Server1
+MV created successfully at index 0100
 
-			Cleaning up...
+Test is setting mv[1] to be 5
+ mSending to Server1
+mv[1] was set to be 5
+ 
+Test is getting mv[-1]
+  Sending to Server3
+mv[-1] not gotten
+ 
+Test is getting mv[590]
+  Sending to Server1
+mv[590] not gotten
+ 
+Test is getting mv[1]
+ mSending to Server0
+mv[1] is 05
+ Exit value: 0 
+Machine halting!
+
+Ticks: total 3687277, idle 3683682, system 3250, user 345
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 8, sent 8
+
+Cleaning up...
+
+setmv
+	-test tries to set non-existent MVs, then creates an MV, attempts to
+		set invalid indices, finally sets mv[1] to 5 and gets it to 
+		prove that its been set
+
+numServers: 5
+Num Pages: 24
+Test is setting a non-existent MV to be 5
+ Sending to Server0
+MV not set
+ 
+Test is setting an invalid MV (-1) to be 5
+  Sending to Server1
+MV not set
+ 
+Test is setting an invalid MV (700) to be 5
+  Sending to Server2
+MV not set
+ 
+Test is creating an MV named mv
+  Sending to Server0
+MV created successfully at index 00
+
+Test is setting mv[-1] to be 5
+  Sending to Server4
+mv[-1] not set
+ 
+Test is setting mv[600] to be 5
+  Sending to Server3
+mv[600] not set
+ 
+Test is setting mv[1] to be 5
+ mSending to Server0
+mv[1] was set to be 5
+ 
+Test is getting mv[1]
+ mSending to Server0
+mv[1] is 05
+ Exit value: 0 
+Machine halting!
+
+Ticks: total 3694848, idle 3691015, system 3480, user 353
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 8, sent 8
+
+Cleaning up...
+
+destroymv
+	-test attempts to destroy invalid MVs, then creates an MV and then
+		destroys it, then it tries to set it but it can't since it is 
+		destroyed
+numServers: 5
+Num Pages: 21
+Test is trying to destroy an MV at index -1
+ Sending to Server1
+MV not destroyed
+ 
+Test is trying to destroy an MV at index 5001
+ 
+Sending to Server3
+MV not destroyed
+ 
+Test is creating an MV named mv
+  Sending to Server1
+MV created successfully at index 0100
+
+Test is trying to destroy an MV at index 0100
+ 
+Sending to Server2
+MV destroyed successfully at index 0100
+ 
+Test is setting mv[1] to be 5
+ mSending to Server4
+mv[1] not set since it has been destroyed
+ Exit value: 0 
+Machine halting!
+
+Ticks: total 2204304, idle 2201587, system 2470, user 247
+Disk I/O: reads 0, writes 0
+Console I/O: reads 0, writes 0
+Paging: faults 0
+Network I/O: packets received 5, sent 5
+
+Cleaning up...
 
 VI. Discussion
-	Experiment Expectation:
-		Part 1 & 2:
-			We expect the the program to properly manage the memory on a Page
-			Fault Exception. We want to evict the appropriate pages from the
-			IPT and TLB. We should write necessary data to the swap file as
-			well. More than one program should be able to run without 
-			interfering with each other's space.
-		Part 3
-			We expect our system calls to send the Server an appropriate
-			message. The server in turn should parse the message and send
-			back the appropriate reply. The system call in return should get 
-			a return value and return it if necessary. We need to be able to 
-			create MVs as well as our original system calls.
+	Experiment Expectation
+		We hope that each time the program sends a syscall to a random
+	server, and if that server has the lock, CV, or MV, then it will
+	execute the appropriate code. If not, then it should message the
+	other servers to see who has the lock, CV, or MV. If no one has it
+	and it is a create, then the original server should make the lock,
+	CV, or MV. 
 	
 	Experiment Results
-		Everything works as expected. Memory is properly managed and no 
-		program interferes with the other. Page evictions happen and we do not
-		lose data. Our system calls also communicate with the server, and the 
-		server in turn replies and gets the appropriate message back. The 
-		server also does the appropriate code it needs to per system call.
+		It happens as expected. The servers communicate with each other
+	and get the right information back to the userprogram. System calls
+	have no idea who they are messaging and they still get the right
+	information.
 	
-	Explanation
-		We ran into some problems along the way. We lost a lot of information
-		by deleting pointers, and thus we were losing where things were in 
-		memory. We also solved a major error by finding we were reading from
-		the incorrect byte offset. We were reading off the inappropriate page
-		table and thus mixing the data.
-
 VII. Miscellaneous
-	The project was much harder and required a lot of debugging compared to our
-	second project, but we actually feel more confident in the final product. 
-	Virtual memory is pretty hard to debug, as it turns out. 
-	
+		As mentioned before, we do not have a Part I, but this has been
+	discussed with Professor Crowley.

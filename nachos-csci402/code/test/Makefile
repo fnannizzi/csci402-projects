@@ -31,13 +31,13 @@ CPP = $(GCCDIR)cpp
 INCDIR =-I../userprog -I../threads
 CFLAGS = -G 0 -c $(INCDIR)
 
-all: halt matmult sort createlock createlock_test acquirelock acquirelock1 acquirelock2 acquirelock3 releaselock releaselock1 releaselock2 releaselock3 destroylock destroylock1 destroylock2\
+all: halt matmult sort createlock createlock2 createlock_test acquirelock acquirelock1 acquirelock2 acquirelock3 releaselock releaselock1 releaselock2 releaselock3 destroylock destroylock1 destroylock2\
  	 createcondition createcondition_test destroycondition destroycondition_right_process destroycondition_wrong_process\
  	 wait wait_normative wait_non_normative wait_destroy wait_wrong_process wait_right_process\
  	 signal signal_normative signal_non_normative signal_destroy signal_wrong_process signal_right_process\
  	 broadcast broadcast_normative broadcast_non_normative broadcast_destroy broadcast_wrong_process broadcast_right_process\
  	 yield yield_test fork fork_test exec exit exit_test printx printx_test testfiles\
- 	 museum uniprogrammed_museum multiprogrammed_museum createmv destroymv setmv getmv
+ 	 museum uniprogrammed_museum multiprogrammed_museum createmv destroymv setmv getmv wait1 wait2 wait3 wait_test broadcast1 broadcast2 broadcast3 broadcast4 broadcast5 broadcast_test signal1 signal2 signal3 signal_test
 
 start.o: start.s ../userprog/syscall.h
 	$(CPP) $(CPPFLAGS) start.s > strt.s
@@ -68,6 +68,12 @@ createlock.o: createlock.c
 createlock: createlock.o start.o
 	$(LD) $(LDFLAGS) start.o createlock.o -o createlock.coff
 	../bin/coff2noff createlock.coff createlock
+	
+createlock2.o: createlock2.c
+	$(CC) $(CFLAGS) -c createlock2.c
+createlock2: createlock2.o start.o
+	$(LD) $(LDFLAGS) start.o createlock2.o -o createlock2.coff
+	../bin/coff2noff createlock2.coff createlock2
 	
 createlock_test.o: createlock_test.c
 	$(CC) $(CFLAGS) -c createlock_test.c
@@ -385,6 +391,91 @@ getmv.o: getmv.c
 getmv: getmv.o start.o
 	$(LD) $(LDFLAGS) start.o getmv.o -o getmv.coff
 	../bin/coff2noff getmv.coff getmv
+	
+wait1.o: wait1.c
+	$(CC) $(CFLAGS) -c wait1.c
+wait1: wait1.o start.o
+	$(LD) $(LDFLAGS) start.o wait1.o -o wait1.coff
+	../bin/coff2noff wait1.coff wait1
+
+wait2.o: wait2.c
+	$(CC) $(CFLAGS) -c wait2.c
+wait2: wait2.o start.o
+	$(LD) $(LDFLAGS) start.o wait2.o -o wait2.coff
+	../bin/coff2noff wait2.coff wait2
+	
+wait3.o: wait3.c
+	$(CC) $(CFLAGS) -c wait3.c
+wait3: wait3.o start.o
+	$(LD) $(LDFLAGS) start.o wait3.o -o wait3.coff
+	../bin/coff2noff wait3.coff wait3
+	
+wait_test.o: wait_test.c
+	$(CC) $(CFLAGS) -c wait_test.c
+wait_test: wait_test.o start.o
+	$(LD) $(LDFLAGS) start.o wait_test.o -o wait_test.coff
+	../bin/coff2noff wait_test.coff wait_test
+	
+broadcast1.o: broadcast1.c
+	$(CC) $(CFLAGS) -c broadcast1.c
+broadcast1: broadcast1.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast1.o -o broadcast1.coff
+	../bin/coff2noff broadcast1.coff broadcast1
+	
+broadcast2.o: broadcast2.c
+	$(CC) $(CFLAGS) -c broadcast2.c
+broadcast2: broadcast2.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast2.o -o broadcast2.coff
+	../bin/coff2noff broadcast2.coff broadcast2
+
+broadcast3.o: broadcast3.c
+	$(CC) $(CFLAGS) -c broadcast3.c
+broadcast3: broadcast3.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast3.o -o broadcast3.coff
+	../bin/coff2noff broadcast3.coff broadcast3
+
+broadcast4.o: broadcast4.c
+	$(CC) $(CFLAGS) -c broadcast4.c
+broadcast4: broadcast4.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast4.o -o broadcast4.coff
+	../bin/coff2noff broadcast4.coff broadcast4
+
+broadcast5.o: broadcast5.c
+	$(CC) $(CFLAGS) -c broadcast5.c
+broadcast5: broadcast5.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast5.o -o broadcast5.coff
+	../bin/coff2noff broadcast5.coff broadcast5
+
+broadcast_test.o: broadcast_test.c
+	$(CC) $(CFLAGS) -c broadcast_test.c
+broadcast_test: broadcast_test.o start.o
+	$(LD) $(LDFLAGS) start.o broadcast_test.o -o broadcast_test.coff
+	../bin/coff2noff broadcast_test.coff broadcast_test
+
+signal1.o: signal1.c
+	$(CC) $(CFLAGS) -c signal1.c
+signal1: signal1.o start.o
+	$(LD) $(LDFLAGS) start.o signal1.o -o signal1.coff
+	../bin/coff2noff signal1.coff signal1
+
+signal2.o: signal2.c
+	$(CC) $(CFLAGS) -c signal2.c
+signal2: signal2.o start.o
+	$(LD) $(LDFLAGS) start.o signal2.o -o signal2.coff
+	../bin/coff2noff signal2.coff signal2
+
+signal3.o: signal3.c
+	$(CC) $(CFLAGS) -c signal3.c
+signal3: signal3.o start.o
+	$(LD) $(LDFLAGS) start.o signal3.o -o signal3.coff
+	../bin/coff2noff signal3.coff signal3
+
+signal_test.o: signal_test.c
+	$(CC) $(CFLAGS) -c signal_test.c
+signal_test: signal_test.o start.o
+	$(LD) $(LDFLAGS) start.o signal_test.o -o signal_test.coff
+	../bin/coff2noff signal_test.coff signal_test
+
 
 clean:
 	rm -f *.o *.coff

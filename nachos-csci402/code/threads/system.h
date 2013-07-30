@@ -21,8 +21,10 @@
 
 typedef struct Message {
 	char* name;
+	char* name2;
 	char* request;
 	int index, index2, index3;
+	int ID, clientMachine, clientMailbox;
 };
 
 enum PageReplacementPolicy { FIFO, RAND };
@@ -81,6 +83,10 @@ extern int nextTLB;				// the next TLB location to write to
 extern int ** swapArray;
 extern int ** pageLocation;
 
+// Networking
+extern int numServers;
+extern int IDer;
+
 extern void PrintTLB();			// prints TLB entries for debugging
 extern void InvalidateAllTLB();	// invalidate TLB entries on a context switch
 extern int SearchForTLBEntry(int vpn); // find a specified TLB entry
@@ -107,6 +113,8 @@ extern SynchDisk   *synchDisk;
 
 #ifdef NETWORK
 #include "post.h"
+extern void Server();
+extern void MessageHandler();
 extern PostOffice* postOffice;
 #endif
 

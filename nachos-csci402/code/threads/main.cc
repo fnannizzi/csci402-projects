@@ -61,7 +61,6 @@ extern void ThreadTest(), Copy(char *unixFile, char *nachosFile);
 extern void Print(char *file), PerformanceTest(void);
 extern void StartProcess(char *file), ConsoleTest(char *in, char *out);
 extern void MailTest(int networkID);
-extern void Server();
 
 //----------------------------------------------------------------------
 // main
@@ -84,6 +83,8 @@ main(int argc, char **argv)
 					// for a particular command
 	bool PRPChosen = FALSE;
 
+
+
     DEBUG('t', "Entering main");
     (void) Initialize(argc, argv);
     
@@ -97,6 +98,7 @@ main(int argc, char **argv)
             printf (copyright);
         }
         if(!strcmp(*argv, "-P")){
+        	ASSERT(argc > 1);
          	if(!strcmp(*(argv+1), "FIFO")){
         		pageReplacementPolicy = FIFO;
         		PRPChosen = TRUE;
@@ -108,9 +110,6 @@ main(int argc, char **argv)
         		PRPChosen = TRUE;
         		printf("Using RAND page replacement\n");
         	}
-        }
-        else {
-        	pageReplacementPolicy = FIFO;
         }
 #ifdef USER_PROGRAM
         if (!strcmp(*argv, "-x")) {        	// run a user program
@@ -152,9 +151,6 @@ main(int argc, char **argv)
 	}
 #endif // FILESYS
 #ifdef NETWORK
-		if (!strcmp(*argv, "-SERVER")) {
-			Server();
-		}
         else if (!strcmp(*argv, "-o")) {
 	    ASSERT(argc > 1);
             Delay(2); 				// delay for 2 seconds

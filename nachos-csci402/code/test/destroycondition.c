@@ -6,6 +6,7 @@ main()
 	int i = 0;	
 	int cv1, cv2;
 	char* name = "condition1";
+	int numCV;
 	
 	Printx("----------------------------------\n",36,1);
     Printx("Beginning DestroyCondition test\n",34,1);
@@ -17,13 +18,14 @@ main()
    		Printx("Condition not destroyed\n",26,1);
    	}
    	else {
-   		Printx("Condition destroyed successfully at index %d%d\n",49,0*10000);	
+   		Printx("Condition destroyed successfully at index %d\n",47,0*10000);	
    	}
    	
    	Printx("----------------------------------\n",36,1);
    	
    	Printx("Test is creating a condition named condition1\n",48,1);
    	cv1 = CreateCondition(name, 11);
+   	numCV = cv1;
    	if(cv1 == -1){
    		Printx("Condition not created\n",24,1);
    	}
@@ -34,23 +36,23 @@ main()
    	Printx("----------------------------------\n",36,1);
    	
    	Printx("Test is destroying condition1\n",32,1);
-   	cv1 = DestroyCondition(0);
+   	cv1 = DestroyCondition(numCV);
    	if(cv1 == -1){
    		Printx("Condition not destroyed\n",26,1);
    	}
    	else {
-   		Printx("Condition destroyed successfully at index %d%d\n",49,cv1*10000);	
+   		Printx("Condition destroyed successfully at index %d%d\n",49,numCV*10000);	
    	}
    	
    	Printx("----------------------------------\n",36,1);
 
    	Printx("Test is attempting to destroy condition1 again\n",49,1);
-   	cv2 = DestroyCondition(0);
+   	cv2 = DestroyCondition(numCV);
    	if(cv2 == -1){
    		Printx("Condition not destroyed\n",26,1);
    	}
    	else {
-   		Printx("Condition destroyed successfully at index %d%d\n",49,cv2*10000);	
+   		Printx("Condition already destroyed successfully at index %d%d\n",56,numCV*10000);	
    	}
 
 	/*Exec("../test/destroycondition_right_process",39);
